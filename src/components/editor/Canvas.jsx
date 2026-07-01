@@ -48,7 +48,9 @@ export default function Canvas() {
   const tool = useEditorStore((s) => s.tool);
   const spaceDown = useEditorStore((s) => s.spaceDown);
   const pageMeta = useEditorStore((s) => s.page);
-  const designSystemCss = useEditorStore((s) => s.designSystemCss);
+  // Read design-system CSS directly off the project — single source of truth,
+  // same access path as Lite. No intermediate cached copy that can go stale.
+  const designSystemCss = useEditorStore((s) => s.project?.designSystemCss || "");
 
   const [rects, setRects] = useState([]);
   const [editing, setEditing] = useState(false);
