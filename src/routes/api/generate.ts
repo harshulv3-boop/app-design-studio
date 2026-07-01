@@ -1,69 +1,7 @@
 import { createLovableAiGatewayProvider } from "@/lib/ai-gateway.server";
 import { ProjectSchema } from "@/lib/screen-schema";
 import { createFileRoute } from "@tanstack/react-router";
-import { generateText, Output } from "ai";
-import { z } from "zod";
-
-const BlockUnionSchema = z.object({
-  type: z.string(),
-  time: z.string().nullable().optional(),
-  title: z.string().nullable().optional(),
-  subtitle: z.string().nullable().optional(),
-  eyebrow: z.string().nullable().optional(),
-  leading: z.string().nullable().optional(),
-  trailing: z.string().nullable().optional(),
-  large: z.boolean().nullable().optional(),
-  accent: z.string().nullable().optional(),
-  ctaLabel: z.string().nullable().optional(),
-  filled: z.boolean().nullable().optional(),
-  heading: z.string().nullable().optional(),
-  columns: z.number().nullable().optional(),
-  activeIndex: z.number().nullable().optional(),
-  size: z.string().nullable().optional(),
-  label: z.string().nullable().optional(),
-  placeholder: z.string().nullable().optional(),
-  name: z.string().nullable().optional(),
-  stats: z
-    .array(
-      z.object({
-        label: z.string(),
-        value: z.string(),
-        unit: z.string().nullable().optional(),
-        tone: z.string().nullable().optional(),
-      }),
-    )
-    .nullable()
-    .optional(),
-  items: z.array(z.any()).nullable().optional(),
-});
-
-const GenSchema = z.object({
-  name: z.string(),
-  platform: z.enum(["ios", "android"]),
-  designSystem: z.object({
-    palette: z.object({
-      background: z.string(),
-      surface: z.string(),
-      text: z.string(),
-      muted: z.string(),
-      accent: z.string(),
-      accentText: z.string(),
-    }),
-    radius: z.enum(["sm", "md", "lg", "xl"]),
-    font: z.enum(["Inter", "SF Pro", "Roboto", "Space Grotesk"]),
-  }),
-  screens: z
-    .array(
-      z.object({
-        id: z.string(),
-        name: z.string(),
-        role: z.string(),
-        blocks: z.array(BlockUnionSchema).min(2).max(10),
-      }),
-    )
-    .min(3)
-    .max(6),
-});
+import { generateText } from "ai";
 
 const BlockCatalog = `Available block \`type\`s (use only these; use only the fields listed):
 - status_bar { time }
@@ -84,8 +22,50 @@ const BlockCatalog = `Available block \`type\`s (use only these; use only the fi
 
 Every screen SHOULD start with status_bar and (unless intentionally full-bleed) a nav_bar. Screens with bottom navigation SHOULD end with a tab_bar and share the same tab_bar items across the app.`;
 
+function extractJson(text: string): unknown {
+  const trimmed = text.trim();
+  // Try direct
+  try {
+    return JSON.parse(trimmed);
+  } catch {
+    /* fall through */
+  }
+  // Strip markdown fences
+  const fence = trimmed.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
+  if (fence) {
+    try {
+      return JSON.parse(fence[1]);
+    } catch {
+      /* fall through */
+    }
+  }
+  // First object
+  const start = trimmed.indexOf("{");
+  const end = trimmed.lastIndexOf("}");
+  if (start >= 0 && end > start) {
+    return JSON.parse(trimmed.slice(start, end + 1));
+  }
+  throw new Error("No JSON found in model response");
+}
+
 function systemPrompt() {
-  return `You are a senior mobile product designer. You generate high-fidelity, investor-ready mobile app screen specifications as JSON. Output MUST match the schema exactly.
+  return `You are a senior mobile product designer. You generate high-fidelity, investor-ready mobile app screen specifications as JSON.
+
+Output ONLY a single valid JSON object (no prose, no code fences) matching this TypeScript shape:
+{
+  "name": string,                     // short product name
+  "platform": "ios" | "android",
+  "designSystem": {
+    "palette": { "background": "#hex", "surface": "#hex", "text": "#hex", "muted": "#hex", "accent": "#hex", "accentText": "#hex" },
+    "radius": "sm" | "md" | "lg" | "xl",
+    "font": "Inter" | "SF Pro" | "Roboto" | "Space Grotesk"
+  },
+  "screens": [
+    { "id": "kebab-case", "name": "Screen Name", "role": "purpose",
+      "blocks": [ { "type": "one-of-catalog", ...fields } ]  // 2–10 blocks
+    }
+  ]  // 4 or 5 screens
+}
 
 Rules:
 - Return 4 or 5 screens that form a coherent, connected flow (e.g. onboarding → home → detail → profile).
@@ -93,7 +73,7 @@ Rules:
 - iOS: SF Pro or Inter, larger radii, generous whitespace. Android: Roboto, Material tokens.
 - Copy must be real and specific to the app idea — no "Lorem ipsum", no "Placeholder".
 - Use tab_bar consistently on the main screens with the SAME items array.
-- Prefer clean, restrained layouts. Never invent new block types.
+- Prefer clean, restrained layouts. Never invent new block types or new field names.
 
 ${BlockCatalog}`;
 }
@@ -122,12 +102,12 @@ export const Route = createFileRoute("/api/generate")({
             : `Generate a mobile app design for the following idea. Target platform: ${body.platform ?? "ios"}.\n\nIdea:\n${body.idea}`;
 
         try {
-          const { output } = await generateText({
+          const { text } = await generateText({
             model,
             system: systemPrompt(),
             prompt: userPrompt,
-            output: Output.object({ schema: GenSchema }),
           });
+          const raw = extractJson(text) as Record<string, unknown>;
 
           // Normalize + validate against strict ProjectSchema
           const withIds = {
@@ -135,14 +115,16 @@ export const Route = createFileRoute("/api/generate")({
               (body.mode === "refine" && (body.project as { id?: string } | null)?.id) ||
               crypto.randomUUID(),
             idea: body.idea ?? (body.project as { idea?: string } | null)?.idea ?? "",
-            ...output,
-            screens: output.screens.map((s: { id?: string; blocks: unknown[] } & Record<string, unknown>, i: number) => ({
-              ...s,
-              id: s.id || `screen-${i}`,
-              blocks: (s.blocks as Array<{ type?: unknown }>).filter(
-                (b) => typeof b.type === "string",
-              ),
-            })),
+            ...raw,
+            screens: (raw.screens as Array<Record<string, unknown>> | undefined ?? []).map(
+              (s, i) => ({
+                ...s,
+                id: (s.id as string) || `screen-${i}`,
+                blocks: ((s.blocks as Array<{ type?: unknown }>) || []).filter(
+                  (b) => typeof b.type === "string",
+                ),
+              }),
+            ),
           };
 
           const parsed = ProjectSchema.safeParse(withIds);
