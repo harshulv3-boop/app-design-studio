@@ -24,28 +24,64 @@ Every screen SHOULD start with status_bar and (unless intentionally full-bleed) 
 
 function extractJson(text: string): unknown {
   const trimmed = text.trim();
-  // Try direct
   try {
     return JSON.parse(trimmed);
-  } catch {
-    /* fall through */
-  }
-  // Strip markdown fences
+  } catch { /* fall through */ }
   const fence = trimmed.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
   if (fence) {
-    try {
-      return JSON.parse(fence[1]);
-    } catch {
-      /* fall through */
-    }
+    try { return JSON.parse(fence[1]); } catch { /* fall through */ }
   }
-  // First object
   const start = trimmed.indexOf("{");
   const end = trimmed.lastIndexOf("}");
   if (start >= 0 && end > start) {
     return JSON.parse(trimmed.slice(start, end + 1));
   }
   throw new Error("No JSON found in model response");
+}
+
+// Coerce values that came back as objects/arrays into strings so the strict
+// schema doesn't reject a good structure over a bad primitive.
+function toStr(v: unknown, fallback = ""): string {
+  if (v == null) return fallback;
+  if (typeof v === "string") return v;
+  if (typeof v === "number" || typeof v === "boolean") return String(v);
+  return fallback;
+}
+
+function normalizeBlock(b: Record<string, unknown>): Record<string, unknown> | null {
+  if (typeof b?.type !== "string") return null;
+  const out: Record<string, unknown> = { ...b };
+  const stringFields = [
+    "time", "title", "subtitle", "eyebrow", "leading", "trailing",
+    "label", "placeholder", "heading", "name", "accent", "ctaLabel",
+  ];
+  for (const k of stringFields) if (k in out) out[k] = toStr(out[k]) || null;
+  if (Array.isArray(out.stats)) {
+    out.stats = (out.stats as Array<Record<string, unknown>>).map((s) => ({
+      label: toStr(s.label, "Stat"),
+      value: toStr(s.value, "0"),
+      unit: s.unit == null ? null : toStr(s.unit),
+      tone: typeof s.tone === "string" ? s.tone : "default",
+    }));
+  }
+  if (Array.isArray(out.items)) {
+    out.items = (out.items as unknown[]).map((it) => {
+      if (typeof it === "string") return it;
+      const r = it as Record<string, unknown>;
+      return {
+        title: toStr(r.title, ""),
+        subtitle: r.subtitle == null ? null : toStr(r.subtitle),
+        trailing: r.trailing == null ? null : toStr(r.trailing),
+      };
+    });
+    // chips/tab_bar want string arrays
+    if (out.type === "chips" || out.type === "tab_bar") {
+      out.items = (out.items as unknown[]).map((it) =>
+        typeof it === "string" ? it : toStr((it as Record<string, unknown>).title, ""),
+      );
+    }
+  }
+  return out;
 }
 
 function systemPrompt() {
@@ -84,7 +120,7 @@ export const Route = createFileRoute("/api/generate")({
       POST: async ({ request }) => {
         const geminiKey = process.env.GEMINI_API_KEY;
         const lovableKey = process.env.LOVABLE_API_KEY;
-        if (!geminiKey && !lovableKey) {
+        if (!lovableKey && !geminiKey) {
           return new Response("Missing GEMINI_API_KEY or LOVABLE_API_KEY", { status: 500 });
         }
 
@@ -96,21 +132,42 @@ export const Route = createFileRoute("/api/generate")({
           project?: unknown;
         };
 
-        const model = geminiKey
-          ? createGeminiProvider(geminiKey)("gemini-2.5-flash-lite")
-          : createLovableAiGatewayProvider(lovableKey!)("google/gemini-3-flash-preview");
+        // Prefer Lovable Gateway (more reliable). Fall back to direct Gemini key if only that is set.
+        const model = lovableKey
+          ? createLovableAiGatewayProvider(lovableKey)("google/gemini-3-flash-preview")
+          : createGeminiProvider(geminiKey!)("gemini-2.5-flash-lite");
 
         const userPrompt =
           body.mode === "refine"
             ? `Refine the following mobile app design based on the user's instruction. Return the FULL updated project JSON (all screens, not a diff). Preserve screen ids where possible.\n\nInstruction:\n${body.instruction}\n\nCurrent project:\n${JSON.stringify(body.project, null, 2)}`
             : `Generate a mobile app design for the following idea. Target platform: ${body.platform ?? "ios"}.\n\nIdea:\n${body.idea}`;
 
+        // Retry a few times on transient upstream failures (Gemini "Service Unavailable").
+        let text = "";
+        let lastErr: unknown = null;
+        for (let attempt = 0; attempt < 3; attempt++) {
+          try {
+            const r = await generateText({ model, system: systemPrompt(), prompt: userPrompt });
+            text = r.text;
+            lastErr = null;
+            break;
+          } catch (err) {
+            lastErr = err;
+            const msg = err instanceof Error ? err.message : String(err);
+            // Only retry transient upstream failures.
+            if (!/unavailable|429|5\d\d|timeout|overload/i.test(msg)) break;
+            await new Promise((r) => setTimeout(r, 400 * (attempt + 1)));
+          }
+        }
+        if (lastErr) {
+          const message = lastErr instanceof Error ? lastErr.message : String(lastErr);
+          return Response.json(
+            { error: `The AI service is temporarily unavailable. Please try again in a moment. (${message})` },
+            { status: 503 },
+          );
+        }
+
         try {
-          const { text } = await generateText({
-            model,
-            system: systemPrompt(),
-            prompt: userPrompt,
-          });
           const raw = extractJson(text) as Record<string, unknown>;
 
           // Normalize + validate against strict ProjectSchema
@@ -123,16 +180,19 @@ export const Route = createFileRoute("/api/generate")({
             screens: (raw.screens as Array<Record<string, unknown>> | undefined ?? []).map(
               (s, i) => ({
                 ...s,
-                id: (s.id as string) || `screen-${i}`,
-                blocks: ((s.blocks as Array<{ type?: unknown }>) || []).filter(
-                  (b) => typeof b.type === "string",
-                ),
+                id: toStr(s.id, `screen-${i}`),
+                name: toStr(s.name, `Screen ${i + 1}`),
+                role: toStr(s.role, "screen"),
+                blocks: ((s.blocks as Array<Record<string, unknown>>) || [])
+                  .map(normalizeBlock)
+                  .filter((b): b is Record<string, unknown> => b !== null),
               }),
             ),
           };
 
           const parsed = ProjectSchema.safeParse(withIds);
           if (!parsed.success) {
+            console.error("Project validation failed", parsed.error.flatten());
             return Response.json(
               { error: "Model output failed validation", details: parsed.error.flatten() },
               { status: 502 },
