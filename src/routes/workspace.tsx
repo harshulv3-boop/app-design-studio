@@ -105,16 +105,31 @@ function Workspace() {
     useEditorStore.setState({ project });
   }, [project]);
 
-  // On screen switch, push that screen's HTML into the editor store.
+  // Track the last html the editor pushed into project — so we can distinguish
+  // "editor -> project" writes from "external -> project" writes (generation,
+  // refine, screen switch) and avoid a reload/write feedback loop.
+  const lastEditorPushRef = useRef<string | null>(null);
   const lastLoadedRef = useRef<string | null>(null);
+
+  // Reactive sync: whenever the SELECTED screen's html in project changes to
+  // something that isn't the editor's own recent push, reload the editor from
+  // it. This keys on the html VALUE (not just selectedId) so any external
+  // update — generation, refine, undo elsewhere — is picked up live, exactly
+  // like Lite reads project.screens[].html live every render.
+  const selectedHtml = selectedId
+    ? project?.screens.find((x) => x.id === selectedId)?.html ?? ""
+    : "";
   useEffect(() => {
     if (!project || !selectedId) return;
-    if (lastLoadedRef.current === selectedId) return;
-    const s = project.screens.find((x) => x.id === selectedId);
-    if (!s) return;
+    const screenSwitched = lastLoadedRef.current !== selectedId;
+    // If this html is exactly what the editor just pushed upstream, it's not
+    // an external change — ignore to prevent a reload loop.
+    if (!screenSwitched && selectedHtml === lastEditorPushRef.current) return;
+    if (!screenSwitched && selectedHtml === editorHtml) return;
     lastLoadedRef.current = selectedId;
-    editorResetForScreen(s.html || "");
-  }, [project, selectedId, editorResetForScreen]);
+    lastEditorPushRef.current = selectedHtml;
+    editorResetForScreen(selectedHtml);
+  }, [selectedHtml, selectedId, project, editorHtml, editorResetForScreen]);
 
   // Persist editor edits back into the active screen's html (debounced).
   useEffect(() => {
@@ -123,6 +138,7 @@ function Workspace() {
     const s = project.screens.find((x) => x.id === selectedId);
     if (!s || s.html === editorHtml) return;
     const t = setTimeout(() => {
+      lastEditorPushRef.current = editorHtml;
       setProject((prev) => {
         if (!prev) return prev;
         const next = {
@@ -223,8 +239,8 @@ function Workspace() {
       if (!res.ok) throw new Error((await res.text()) || `HTTP ${res.status}`);
       const { html } = (await res.json()) as { html: string };
       const withIds = ensureIds(html);
-      // Same document — push through editor store so undo/redo history stays unified.
-      reloadHtml(withIds);
+      // Update project only — the reactive sync effect above will push the
+      // new html into the editor store (single source of truth: project).
       setProject((prev) => {
         if (!prev) return prev;
         const next = {
