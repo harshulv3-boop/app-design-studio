@@ -99,10 +99,10 @@ function Workspace() {
     [reloadHtml],
   );
 
-  // Keep the Pro editor's shared design-system CSS in sync with the project so
-  // Pro-mode canvas renders each screen with the same tokens/components as Lite.
+  // Keep the Pro editor's project reference in sync. The design-system CSS is
+  // read directly off project.designSystemCss in the Canvas — no cached copy.
   useEffect(() => {
-    useEditorStore.setState({ project, designSystemCss: project?.designSystemCss || "" });
+    useEditorStore.setState({ project });
   }, [project]);
 
   // On screen switch, push that screen's HTML into the editor store.
