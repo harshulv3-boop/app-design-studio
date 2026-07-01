@@ -95,16 +95,14 @@ function Landing() {
                 <button className="flex h-10 w-10 items-center justify-center rounded-full bg-surface/80 text-muted-foreground transition-colors hover:text-foreground" aria-label="Upload image">
                   <ImageIcon className="h-4 w-4" />
                 </button>
-                <button className="flex items-center gap-2 rounded-full bg-surface/80 px-3.5 py-2 text-sm text-foreground/90">
+                <button
+                  onClick={() => setPlatform((p) => (p === "ios" ? "android" : "ios"))}
+                  aria-label="Toggle platform"
+                  className="flex items-center gap-2 rounded-full bg-surface/80 px-3.5 py-2 text-sm text-foreground/90 transition-colors hover:text-foreground"
+                >
                   <Sparkle className="h-3.5 w-3.5 text-brand" />
                   <span>{platform === "ios" ? "iOS" : "Android"}</span>
-                  <button
-                    onClick={() => setPlatform((p) => (p === "ios" ? "android" : "ios"))}
-                    className="ml-1 text-muted-foreground hover:text-foreground"
-                    aria-label="Toggle platform"
-                  >
-                    <ChevronDown className="h-3.5 w-3.5" />
-                  </button>
+                  <ChevronDown className="ml-1 h-3.5 w-3.5 text-muted-foreground" />
                 </button>
               </div>
               <button
