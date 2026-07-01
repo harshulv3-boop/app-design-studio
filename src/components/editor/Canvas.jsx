@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import { useEditorStore } from "@/store/editorStore";
-import { useFlowStore } from "@/store/flowStore.stub";
 import { findEl, ensureIdsOnElement, sanitizeHtml, classifyElement } from "@/lib/pro/htmlUtils";
+import { PHONE_FRAME, PhoneFrameOutline, PhoneNotch } from "@/components/PhoneShell";
 import Toolbar from "@/components/editor/Toolbar";
 import ContextMenu from "@/components/editor/ContextMenu";
 
@@ -33,9 +33,10 @@ export default function Canvas() {
   // Website imports need a fixed-width container so that CSS `width: 100%`
   // and `max-width` on captured elements resolve against the captured viewport
   // width rather than collapsing against an unsized inline-block parent.
-  const _project = useFlowStore((s) => s.project);
+  const _project = useEditorStore((s) => s.project);
   const isWebsite = _project?.format_config?.artifactType === "website";
   const frameWidth = _project?.format_config?.frame?.width || null;
+  const platform = _project?.platform === "android" ? "android" : "ios";
 
   const htmlVersion = useEditorStore((s) => s.htmlVersion);
   const selectedIds = useEditorStore((s) => s.selectedIds);
@@ -195,10 +196,10 @@ export default function Canvas() {
     const cw = page.scrollWidth || 1;
     const ch = page.scrollHeight || 1;
     const pad = 80;
-    const z = clamp(
+          const z = clamp(
       Math.min((vp.clientWidth - pad) / cw, (vp.clientHeight - pad) / ch),
       0.1,
-      2
+            1
     );
     store().setZoom(z);
     store().setPan({ x: (vp.clientWidth - cw * z) / 2, y: (vp.clientHeight - ch * z) / 2 });
@@ -1372,40 +1373,12 @@ export default function Canvas() {
         }}
       >
         <div style={{ position: "relative" }} onClickCapture={onPageClickCapture}>
-          {/* Phone chrome — matches <PhoneFrame> in Lite so Pro and Lite render the same visual. */}
+          {/* Phone chrome — shared with Lite's <PhoneFrame>, so only Pro tools differ. */}
           {!isWebsite && (
-            <div
-              aria-hidden
-              data-overlay
-              style={{
-                position: "absolute",
-                inset: -6,
-                borderRadius: 52,
-                border: "6px solid #27272a",
-                background: "#000",
-                boxShadow: "0 30px 60px -15px rgba(0,0,0,0.6)",
-                pointerEvents: "none",
-                zIndex: 0,
-              }}
-            />
+            <PhoneFrameOutline platform={platform} overlay />
           )}
           {!isWebsite && (
-            <div
-              aria-hidden
-              data-overlay
-              style={{
-                position: "absolute",
-                top: 8,
-                left: "50%",
-                transform: "translateX(-50%)",
-                width: 100,
-                height: 26,
-                borderRadius: 999,
-                background: "#000",
-                pointerEvents: "none",
-                zIndex: 2,
-              }}
-            />
+            <PhoneNotch platform={platform} overlay />
           )}
           <div
             ref={pageRef}
@@ -1419,10 +1392,11 @@ export default function Canvas() {
               display: "block",
               overflow: "hidden",
               background: "#000",
-              borderRadius: isWebsite ? 0 : 46,
+              borderRadius: isWebsite ? 0 : PHONE_FRAME.contentRadius,
+              fontSize: "16px",
               // Websites keep captured viewport width; screens use the phone frame.
-              width: isWebsite && frameWidth ? `${frameWidth}px` : "375px",
-              height: isWebsite ? "auto" : "812px",
+              width: isWebsite && frameWidth ? `${frameWidth}px` : `${PHONE_FRAME.width}px`,
+              height: isWebsite ? "auto" : `${PHONE_FRAME.height}px`,
             }}
             data-testid="canvas-page"
           />
