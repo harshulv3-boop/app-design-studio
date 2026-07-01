@@ -122,11 +122,11 @@ export const Route = createFileRoute("/api/generate")({
             : `Generate a mobile app design for the following idea. Target platform: ${body.platform ?? "ios"}.\n\nIdea:\n${body.idea}`;
 
         try {
-          const { experimental_output: output } = await generateText({
+          const { output } = await generateText({
             model,
             system: systemPrompt(),
             prompt: userPrompt,
-            experimental_output: Output.object({ schema: GenSchema }),
+            output: Output.object({ schema: GenSchema }),
           });
 
           // Normalize + validate against strict ProjectSchema
@@ -136,10 +136,12 @@ export const Route = createFileRoute("/api/generate")({
               crypto.randomUUID(),
             idea: body.idea ?? (body.project as { idea?: string } | null)?.idea ?? "",
             ...output,
-            screens: output.screens.map((s, i) => ({
+            screens: output.screens.map((s: { id?: string; blocks: unknown[] } & Record<string, unknown>, i: number) => ({
               ...s,
               id: s.id || `screen-${i}`,
-              blocks: s.blocks.filter((b) => typeof b.type === "string"),
+              blocks: (s.blocks as Array<{ type?: unknown }>).filter(
+                (b) => typeof b.type === "string",
+              ),
             })),
           };
 
