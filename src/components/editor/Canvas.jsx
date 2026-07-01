@@ -48,10 +48,13 @@ export default function Canvas() {
   const pageMeta = useEditorStore((s) => s.page);
   const designSystemCss = useEditorStore((s) => s.designSystemCss);
   // Wrap the project's design-system CSS so it applies ONLY inside the page
-  // container. Uses CSS @scope so global-y selectors (body, :root) are ignored
-  // instead of leaking out and breaking the surrounding app chrome.
+  // container. `:root` inside a scope doesn't match the scoped root, so
+  // token declarations like `:root { --text: … }` would set nothing —
+  // rewrite `:root` to selectors that DO match inside the scope.
   const scopedCss = designSystemCss
-    ? `@scope (.pro-canvas-page) to (.pro-canvas-page-boundary) {\n${designSystemCss}\n}`
+    ? `@scope (.pro-canvas-page) to (.pro-canvas-page-boundary) {\n${
+        designSystemCss.replace(/(^|[\s,{}])(:root)\b/g, "$1:scope, .screen")
+      }\n}`
     : "";
 
   const [rects, setRects] = useState([]);
