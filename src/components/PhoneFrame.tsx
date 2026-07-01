@@ -27,12 +27,13 @@ export function PhoneFrame({ platform, children, label, index, selected, onClick
         }`}
       >
         <div
-          className={`relative flex h-[812px] w-[375px] flex-col overflow-hidden bg-black ${
-            ios ? "rounded-[52px] border-[6px] border-zinc-800" : "rounded-[42px] border-[6px] border-zinc-800"
+          style={{ boxSizing: "content-box" }}
+          className={`relative flex h-[812px] w-[375px] flex-col overflow-hidden bg-black border-[6px] border-zinc-800 ${
+            ios ? "rounded-[52px]" : "rounded-[42px]"
           }`}
         >
           {ios && (
-            <div className="pointer-events-none absolute left-1/2 top-2 z-30 h-6 w-24 -translate-x-1/2 rounded-full bg-black" />
+            <div className="pointer-events-none absolute left-1/2 top-2 z-30 h-[26px] w-[100px] -translate-x-1/2 rounded-full bg-black" />
           )}
           <div className="relative flex h-full w-full flex-col overflow-hidden">{children}</div>
         </div>
