@@ -27,8 +27,8 @@ export function PhoneFrame({ platform, children, label, index, selected, onClick
         }`}
       >
         <div
-          className={`relative flex h-[640px] w-[320px] flex-col overflow-hidden bg-black ${
-            ios ? "rounded-[44px] border-[6px] border-zinc-800" : "rounded-[36px] border-[6px] border-zinc-800"
+          className={`relative flex h-[812px] w-[375px] flex-col overflow-hidden bg-black ${
+            ios ? "rounded-[52px] border-[6px] border-zinc-800" : "rounded-[42px] border-[6px] border-zinc-800"
           }`}
         >
           {ios && (
