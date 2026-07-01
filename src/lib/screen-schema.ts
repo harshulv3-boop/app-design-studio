@@ -1,12 +1,57 @@
 import { z } from "zod";
 
 /**
- * A mobile app screen is a stack of blocks. Each block is a high-level UI
- * element that the renderer knows how to draw as production-quality mobile UI.
- * This is intentionally opinionated so the AI outputs consistent, renderable
- * layouts rather than freeform HTML.
+ * HTML is now the single source of truth for every screen. The AI generates
+ * a shared design system (CSS variables + shared chrome CSS) once, then a
+ * self-contained HTML fragment for each screen constrained by that system.
+ * Both Lite (chat) and Pro (canvas) modes edit the same HTML document.
+ *
+ * Legacy `blocks` field is kept purely for one-time migration of pre-HTML
+ * projects loaded from localStorage; new generations do not populate it.
  */
 
+// Legacy block schema (unused by the live pipeline; retained for migration).
+const LegacyBlockSchema = z.object({ type: z.string() }).passthrough();
+export type Block = z.infer<typeof LegacyBlockSchema>;
+
+export const ScreenSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  role: z.string(),
+  html: z.string(),
+  // legacy — always empty for freshly generated projects
+  blocks: z.array(LegacyBlockSchema).optional(),
+});
+export type Screen = z.infer<typeof ScreenSchema>;
+
+export const DesignSystemSchema = z.object({
+  palette: z.object({
+    background: z.string(),
+    surface: z.string(),
+    text: z.string(),
+    muted: z.string(),
+    accent: z.string(),
+    accentText: z.string(),
+  }),
+  radius: z.enum(["sm", "md", "lg", "xl"]).default("lg"),
+  font: z.string().default("Inter"),
+});
+export type DesignSystem = z.infer<typeof DesignSystemSchema>;
+
+export const ProjectSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  idea: z.string(),
+  platform: z.enum(["ios", "android"]).default("ios"),
+  designSystem: DesignSystemSchema,
+  // Shared CSS injected into every screen: CSS variables, resets, shared
+  // typography and any shared component classes (nav/tab bars).
+  designSystemCss: z.string(),
+  screens: z.array(ScreenSchema).min(1).max(8),
+});
+export type Project = z.infer<typeof ProjectSchema>;
+
+// Kept for reference; not used by the runtime.
 export const BlockSchema = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("status_bar"),
@@ -104,37 +149,3 @@ export const BlockSchema = z.discriminatedUnion("type", [
     size: z.enum(["sm", "md", "lg"]).default("md"),
   }),
 ]);
-
-export type Block = z.infer<typeof BlockSchema>;
-
-export const ScreenSchema = z.object({
-  id: z.string(),
-  name: z.string(),
-  role: z.string(),
-  blocks: z.array(BlockSchema).min(2).max(10),
-});
-export type Screen = z.infer<typeof ScreenSchema>;
-
-export const DesignSystemSchema = z.object({
-  palette: z.object({
-    background: z.string(),
-    surface: z.string(),
-    text: z.string(),
-    muted: z.string(),
-    accent: z.string(),
-    accentText: z.string(),
-  }),
-  radius: z.enum(["sm", "md", "lg", "xl"]).default("lg"),
-  font: z.enum(["Inter", "SF Pro", "Roboto", "Space Grotesk"]).default("Inter"),
-});
-export type DesignSystem = z.infer<typeof DesignSystemSchema>;
-
-export const ProjectSchema = z.object({
-  id: z.string(),
-  name: z.string(),
-  idea: z.string(),
-  platform: z.enum(["ios", "android"]).default("ios"),
-  designSystem: DesignSystemSchema,
-  screens: z.array(ScreenSchema).min(1).max(8),
-});
-export type Project = z.infer<typeof ProjectSchema>;
