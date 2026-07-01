@@ -1372,7 +1372,14 @@ export default function Canvas() {
           transformOrigin: "0 0",
         }}
       >
-        <div style={{ position: "relative" }} onClickCapture={onPageClickCapture}>
+        <div
+          style={{
+            position: "relative",
+            width: isWebsite && frameWidth ? `${frameWidth}px` : `${PHONE_FRAME.width}px`,
+            height: isWebsite ? "auto" : `${PHONE_FRAME.height}px`,
+          }}
+          onClickCapture={onPageClickCapture}
+        >
           {/* Phone chrome — shared with Lite's <PhoneFrame>, so only Pro tools differ. */}
           {!isWebsite && (
             <PhoneFrameOutline platform={platform} overlay />
