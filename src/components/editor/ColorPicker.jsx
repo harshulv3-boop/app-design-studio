@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { createPortal } from "react-dom";
 import { X, Plus, Check, Pencil, Trash2, Pipette } from "lucide-react";
 import { useEditorStore } from "@/store/editorStore";
-import { hsvToHex, hexToHsv, hexToRgb, rgbToHex, cssColorToHex } from "@/lib/colorUtils";
+import { hsvToHex, hexToHsv, hexToRgb, rgbToHex, cssColorToHex } from "@/lib/pro/colorUtils";
 
 // ── Built-in palettes ─────────────────────────────────────────────────────────
 

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Plus, Eye, EyeOff, Trash2, ChevronUp, ChevronDown, ChevronRight } from "lucide-react";
-import { EFFECT_TYPES, defaultEffect, parseEffects, applyEffects, splitBgLayers } from "@/lib/effects";
+import { EFFECT_TYPES, defaultEffect, parseEffects, applyEffects, splitBgLayers } from "@/lib/pro/effects";
 
 const lbl = "text-[10px] text-zinc-500";
 const inp = "w-full bg-black border border-white/10 text-white rounded px-1.5 py-1 text-[11px] outline-none focus:border-white/30";

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { X, ChevronDown, MoreHorizontal } from "lucide-react";
-import { createTextStyle, updateTextStyle } from "@/lib/textStyles";
-import { loadGoogleFont, getFonts } from "@/lib/fonts";
+import { createTextStyle, updateTextStyle } from "@/lib/pro/textStyles";
+import { loadGoogleFont, getFonts } from "@/lib/pro/fonts";
 import { toast } from "sonner";
 
 const WEIGHTS = [

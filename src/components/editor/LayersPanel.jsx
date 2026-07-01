@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useEditorStore } from "@/store/editorStore";
-import { buildTree } from "@/lib/htmlUtils";
+import { buildTree } from "@/lib/pro/htmlUtils";
 import {
   ChevronRight,
   Eye,

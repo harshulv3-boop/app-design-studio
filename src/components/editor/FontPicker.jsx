@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { ChevronDown, Search } from "lucide-react";
-import { getFonts, loadGoogleFont } from "@/lib/fonts";
+import { getFonts, loadGoogleFont } from "@/lib/pro/fonts";
 
 // Searchable Google Fonts picker. Loads the full family list lazily and
 // injects the selected font's stylesheet on demand (no upfront bulk load).

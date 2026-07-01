@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import { useEditorStore } from "@/store/editorStore";
-import { useFlowStore } from "@/store/flowStore";
-import { findEl, ensureIdsOnElement, sanitizeHtml, classifyElement } from "@/lib/htmlUtils";
+import { useFlowStore } from "@/store/flowStore.stub";
+import { findEl, ensureIdsOnElement, sanitizeHtml, classifyElement } from "@/lib/pro/htmlUtils";
 import Toolbar from "@/components/editor/Toolbar";
 import ContextMenu from "@/components/editor/ContextMenu";
 

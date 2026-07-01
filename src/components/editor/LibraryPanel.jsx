@@ -2,7 +2,7 @@ import { useRef, useState } from "react";
 import { Plus, Trash2, Pencil, Check, Copy, MoreHorizontal } from "lucide-react";
 import { toast } from "sonner";
 import { useEditorStore } from "@/store/editorStore";
-import { getTextStyles, deleteTextStyle, duplicateTextStyle, renameTextStyle, applyTextStyle } from "@/lib/textStyles";
+import { getTextStyles, deleteTextStyle, duplicateTextStyle, renameTextStyle, applyTextStyle } from "@/lib/pro/textStyles";
 import ColorPicker from "@/components/editor/ColorPicker";
 import CreateTextStyleModal from "@/components/editor/CreateTextStyleModal";
 

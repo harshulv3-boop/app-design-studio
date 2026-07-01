@@ -3,10 +3,10 @@ import {
   Plus, Search, Check, Pencil, Trash2, Copy, RefreshCw, X, ChevronDown, ChevronRight, Type,
 } from "lucide-react";
 import { useEditorStore } from "@/store/editorStore";
-import { LIBRARY_PRESETS, PRESET_CATEGORIES } from "@/lib/stylePresets";
-import { captureFromElement, applyToElement, previewColor, styleId } from "@/lib/styleEngine";
+import { LIBRARY_PRESETS, PRESET_CATEGORIES } from "@/lib/pro/stylePresets";
+import { captureFromElement, applyToElement, previewColor, styleId } from "@/lib/pro/styleEngine";
 import TextStylesControl from "@/components/editor/TextStylesControl";
-import { applyTextStyle } from "@/lib/textStyles";
+import { applyTextStyle } from "@/lib/pro/textStyles";
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 

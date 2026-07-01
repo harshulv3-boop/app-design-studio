@@ -4,7 +4,7 @@ import { Plus, Settings2, Trash2, Copy, Check, X, Pencil } from "lucide-react";
 import {
   getTextStyles, createTextStyle, deleteTextStyle, duplicateTextStyle,
   renameTextStyle, updateTextStyle, applyTextStyle, captureTextStyle,
-} from "@/lib/textStyles";
+} from "@/lib/pro/textStyles";
 
 const inp = "w-full bg-black border border-white/10 text-white rounded px-2 py-1 text-xs outline-none focus:border-white/30";
 

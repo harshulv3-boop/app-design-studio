@@ -1,16 +1,16 @@
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { useEditorStore } from "@/store/editorStore";
-import { api } from "@/lib/api";
-import { fileToDataUrl } from "@/lib/file";
+import { api } from "@/lib/pro/api";
+import { fileToDataUrl } from "@/lib/pro/file";
 import FontPicker from "@/components/editor/FontPicker";
 import ColorPicker from "@/components/editor/ColorPicker";
 import EffectsPanel from "@/components/editor/EffectsPanel";
 import LibraryPanel from "@/components/editor/LibraryPanel";
 import CreateTextStyleModal from "@/components/editor/CreateTextStyleModal";
-import { loadGoogleFont, readableFamily } from "@/lib/fonts";
-import { getTextStyles, applyTextStyle } from "@/lib/textStyles";
-import { splitBgLayers } from "@/lib/effects";
+import { loadGoogleFont, readableFamily } from "@/lib/pro/fonts";
+import { getTextStyles, applyTextStyle } from "@/lib/pro/textStyles";
+import { splitBgLayers } from "@/lib/pro/effects";
 import GradientEditor, { buildGradient } from "@/components/editor/GradientEditor";
 import {
   Sparkles, Loader2, Trash2, Copy, Upload, ImageOff,

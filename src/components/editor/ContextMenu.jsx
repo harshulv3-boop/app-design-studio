@@ -1,5 +1,5 @@
 import { useEffect } from "react";
-import { MOD, SHIFT } from "@/lib/platform";
+import { MOD, SHIFT } from "@/lib/pro/platform";
 import { useEditorStore } from "@/store/editorStore";
 
 export default function ContextMenu({ x, y, ops, onClose }) {
