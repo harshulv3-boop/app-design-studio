@@ -358,7 +358,7 @@ function Workspace() {
 
         {/* Inspector */}
         {selected && project && (
-          <div className="absolute right-6 top-20 z-30 w-64 rounded-xl border border-border bg-panel/95 p-4 shadow-2xl backdrop-blur">
+          <div className="pointer-events-auto absolute bottom-6 right-6 z-30 w-64 rounded-xl border border-border bg-panel/95 p-4 shadow-2xl backdrop-blur">
             <div className="mb-3 flex items-center justify-between">
               <div className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
                 Selection
