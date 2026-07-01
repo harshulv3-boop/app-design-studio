@@ -1369,22 +1369,57 @@ export default function Canvas() {
         }}
       >
         <div style={{ position: "relative" }} onClickCapture={onPageClickCapture}>
+          {/* Phone chrome — matches <PhoneFrame> in Lite so Pro and Lite render the same visual. */}
+          {!isWebsite && (
+            <div
+              aria-hidden
+              data-overlay
+              style={{
+                position: "absolute",
+                inset: -6,
+                borderRadius: 52,
+                border: "6px solid #27272a",
+                background: "#000",
+                boxShadow: "0 30px 60px -15px rgba(0,0,0,0.6)",
+                pointerEvents: "none",
+                zIndex: 0,
+              }}
+            />
+          )}
+          {!isWebsite && (
+            <div
+              aria-hidden
+              data-overlay
+              style={{
+                position: "absolute",
+                top: 8,
+                left: "50%",
+                transform: "translateX(-50%)",
+                width: 100,
+                height: 26,
+                borderRadius: 999,
+                background: "#000",
+                pointerEvents: "none",
+                zIndex: 2,
+              }}
+            />
+          )}
           <div
             ref={pageRef}
             onDoubleClick={() => {
-              // Use whichever element was already selected by the first click.
-              // Do NOT re-derive from e.target — the click handler already
-              // ran and set the correct selection.
               if (store().selectedId) startEditing();
             }}
             className="shadow-2xl pro-canvas-page"
             style={{
               position: "relative",
-              display: "inline-block",
-              // Websites use CSS `width:100%` / `max-width` that must resolve
-              // against a fixed-width parent — set that to the captured viewport
-              // width. Without this, elements expand to viewport width or collapse.
-              width: (isWebsite && frameWidth) ? `${frameWidth}px` : "max-content",
+              zIndex: 1,
+              display: "block",
+              overflow: "hidden",
+              background: "#000",
+              borderRadius: isWebsite ? 0 : 46,
+              // Websites keep captured viewport width; screens use the phone frame.
+              width: isWebsite && frameWidth ? `${frameWidth}px` : "375px",
+              height: isWebsite ? "auto" : "812px",
             }}
             data-testid="canvas-page"
           />
