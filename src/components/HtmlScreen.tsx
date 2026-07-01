@@ -39,7 +39,7 @@ export function HtmlScreen({ html, css, className }: Props) {
     const host = hostRef.current;
     if (!host) return;
     const shadow = host.shadowRoot ?? host.attachShadow({ mode: "open" });
-    shadow.innerHTML = `<style>${adaptCssForShadow(css)}\n:host{display:block;width:100%;height:100%;color:var(--text,inherit);background:var(--bg,transparent);}</style>${sanitize(html)}`;
+    shadow.innerHTML = `<style>${adaptCssForShadow(css)}\n:host{display:block;width:100%;height:100%;box-sizing:border-box;font-size:16px;color:var(--text,inherit);background:var(--bg,transparent);}</style>${sanitize(html)}`;
   }, [html, css]);
 
   return <div ref={hostRef} className={className} style={{ width: "100%", height: "100%" }} />;
