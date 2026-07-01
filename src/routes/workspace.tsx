@@ -509,13 +509,8 @@ function LiteCanvas({
 }
 
 function ProCanvasHost({ project, isBusy }: { project: Project | null; isBusy: boolean }) {
-  const css = project?.designSystemCss ?? "";
-  // We inject the shared CSS into a <style> tag scoped to the canvas root so
-  // the ported Canvas (which operates on our .screen fragment) picks it up.
   return (
     <div className="relative h-full w-full">
-      {/* Shared design-system CSS visible to the canvas's DOM */}
-      <style dangerouslySetInnerHTML={{ __html: css }} />
       {project ? (
         <Suspense fallback={<div className="p-6 text-sm text-muted-foreground">Loading editor…</div>}>
           <Canvas />
