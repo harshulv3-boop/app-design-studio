@@ -1,4 +1,4 @@
-import { createLovableAiGatewayProvider } from "@/lib/ai-gateway.server";
+import { createGeminiProvider, createLovableAiGatewayProvider } from "@/lib/ai-gateway.server";
 import { ProjectSchema } from "@/lib/screen-schema";
 import { createFileRoute } from "@tanstack/react-router";
 import { generateText } from "ai";
@@ -82,8 +82,11 @@ export const Route = createFileRoute("/api/generate")({
   server: {
     handlers: {
       POST: async ({ request }) => {
-        const key = process.env.LOVABLE_API_KEY;
-        if (!key) return new Response("Missing LOVABLE_API_KEY", { status: 500 });
+        const geminiKey = process.env.GEMINI_API_KEY;
+        const lovableKey = process.env.LOVABLE_API_KEY;
+        if (!geminiKey && !lovableKey) {
+          return new Response("Missing GEMINI_API_KEY or LOVABLE_API_KEY", { status: 500 });
+        }
 
         const body = (await request.json()) as {
           mode: "generate" | "refine";
@@ -93,8 +96,9 @@ export const Route = createFileRoute("/api/generate")({
           project?: unknown;
         };
 
-        const gateway = createLovableAiGatewayProvider(key);
-        const model = gateway("google/gemini-3-flash-preview");
+        const model = geminiKey
+          ? createGeminiProvider(geminiKey)("gemini-2.5-flash-lite")
+          : createLovableAiGatewayProvider(lovableKey!)("google/gemini-3-flash-preview");
 
         const userPrompt =
           body.mode === "refine"
