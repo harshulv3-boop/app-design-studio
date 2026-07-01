@@ -1,5 +1,4 @@
-import { HtmlScreen } from "@/components/HtmlScreen";
-import { PhoneFrame } from "@/components/PhoneFrame";
+import { PhoneScreenRenderer } from "@/components/PhoneScreenRenderer";
 import { ensureIds } from "@/lib/pro/htmlUtils";
 import { loadProject, saveProject } from "@/lib/project-store";
 import type { Project } from "@/lib/screen-schema";
@@ -488,16 +487,16 @@ function LiteCanvas({
         {project ? (
           <div className="flex min-w-max items-start justify-center gap-10">
             {project.screens.map((s, i) => (
-              <PhoneFrame
+              <LitePhoneScreen
                 key={s.id}
                 platform={project.platform}
+                html={s.html}
+                css={project.designSystemCss}
                 label={s.name}
                 index={i}
                 selected={s.id === selectedId}
                 onClick={() => onSelectScreen(s.id)}
-              >
-                <HtmlScreen html={s.html} css={project.designSystemCss} />
-              </PhoneFrame>
+              />
             ))}
           </div>
         ) : (
@@ -520,6 +519,45 @@ function ProCanvasHost({ project, isBusy }: { project: Project | null; isBusy: b
           <EmptyState isBusy={isBusy} />
         </div>
       )}
+    </div>
+  );
+}
+
+function LitePhoneScreen({
+  platform,
+  html,
+  css,
+  label,
+  index,
+  selected,
+  onClick,
+}: {
+  platform: "ios" | "android";
+  html: string;
+  css: string;
+  label: string;
+  index: number;
+  selected: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <div className="flex shrink-0 flex-col gap-3">
+      <div className="ml-1 flex items-center gap-2 text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
+        <span className="text-brand">{String(index + 1).padStart(2, "0")}</span>
+        <span>{label}</span>
+      </div>
+      <button
+        type="button"
+        onClick={onClick}
+        className={`group relative rounded-[48px] transition-all ${
+          selected
+            ? "shadow-[0_0_0_2px_var(--brand),0_30px_60px_-15px_rgba(99,102,241,0.4)]"
+            : "shadow-2xl hover:shadow-[0_30px_60px_-15px_rgba(0,0,0,0.6)]"
+        }`}
+        data-phone-frame-button
+      >
+        <PhoneScreenRenderer platform={platform} html={html} css={css} />
+      </button>
     </div>
   );
 }
@@ -767,9 +805,17 @@ function PreviewModal({ project, onClose, initialId }: { project: Project; onClo
             </button>
           ))}
         </div>
-        <PhoneFrame platform={project.platform} label={screen?.name ?? ""} index={0} selected={false}>
-          {screen && <HtmlScreen html={screen.html} css={project.designSystemCss} />}
-        </PhoneFrame>
+        {screen && (
+          <LitePhoneScreen
+            platform={project.platform}
+            html={screen.html}
+            css={project.designSystemCss}
+            label={screen.name}
+            index={0}
+            selected={false}
+            onClick={() => {}}
+          />
+        )}
       </div>
     </div>
   );
