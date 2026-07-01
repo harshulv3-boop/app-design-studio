@@ -26,30 +26,55 @@ import {
   Share2,
   Sparkle,
   Sparkles,
+  X,
+  LogOut,
+  Settings,
+  User as UserIcon,
+  CreditCard,
 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 
-type Search = { idea?: string; platform?: "ios" | "android" };
+type Search = { idea?: string; platform?: "ios" | "android"; share?: string };
 
 export const Route = createFileRoute("/workspace")({
   validateSearch: (s: Record<string, unknown>): Search => ({
     idea: typeof s.idea === "string" ? s.idea : undefined,
     platform: s.platform === "android" ? "android" : s.platform === "ios" ? "ios" : undefined,
+    share: typeof s.share === "string" ? s.share : undefined,
   }),
   component: Workspace,
 });
 
 type ChatMsg = { role: "user" | "assistant"; text: string };
 
+function encodeShare(p: Project): string {
+  const json = JSON.stringify(p);
+  // UTF-8 safe base64 (URL-safe)
+  const b64 = btoa(unescape(encodeURIComponent(json)));
+  return b64.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+function decodeShare(s: string): Project | null {
+  try {
+    const b64 = s.replace(/-/g, "+").replace(/_/g, "/");
+    const pad = b64.length % 4 === 0 ? "" : "=".repeat(4 - (b64.length % 4));
+    const json = decodeURIComponent(escape(atob(b64 + pad)));
+    return JSON.parse(json) as Project;
+  } catch {
+    return null;
+  }
+}
+
 function Workspace() {
-  const { idea, platform: platformParam } = Route.useSearch();
+  const { idea, platform: platformParam, share } = Route.useSearch();
   const [project, setProject] = useState<Project | null>(null);
   const [status, setStatus] = useState<"idle" | "generating" | "refining">("idle");
   const [chat, setChat] = useState<ChatMsg[]>([]);
   const [input, setInput] = useState("");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [exportOpen, setExportOpen] = useState(false);
+  const [profileOpen, setProfileOpen] = useState(false);
+  const [previewOpen, setPreviewOpen] = useState(false);
   const [tab, setTab] = useState<"chat" | "theme">("chat");
   const [zoom, setZoom] = useState(100);
   const bootstrapped = useRef(false);
@@ -87,6 +112,17 @@ function Workspace() {
   useEffect(() => {
     if (bootstrapped.current) return;
     bootstrapped.current = true;
+    if (share) {
+      const p = decodeShare(share);
+      if (p) {
+        setProject(p);
+        setSelectedId(p.screens[0]?.id ?? null);
+        saveProject(p);
+        setChat([{ role: "assistant", text: `Loaded a shared project — "${p.name}".` }]);
+        return;
+      }
+      toast.error("Shared link is invalid or corrupted.");
+    }
     const saved = loadProject();
     if (idea) {
       generate(idea, platformParam ?? "ios");
@@ -94,7 +130,16 @@ function Workspace() {
       setProject(saved);
       setSelectedId(saved.screens[0]?.id ?? null);
     }
-  }, [idea, platformParam, generate]);
+  }, [idea, platformParam, share, generate]);
+
+  function handleShare() {
+    if (!project) return;
+    const link = `${window.location.origin}/workspace?share=${encodeShare(project)}`;
+    navigator.clipboard.writeText(link).then(
+      () => toast.success("Share link copied to clipboard"),
+      () => toast.error("Couldn't copy — clipboard blocked"),
+    );
+  }
 
   async function refine() {
     if (!input.trim() || !project || status !== "idle") return;
@@ -163,11 +208,19 @@ function Workspace() {
             </button>
           ))}
           <div className="ml-1 flex items-center gap-1 rounded-full border border-border bg-panel/40 p-1">
-            <button className="flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium text-foreground/90 hover:bg-panel">
+            <button
+              onClick={() => project && setPreviewOpen(true)}
+              disabled={!project}
+              className="flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium text-foreground/90 hover:bg-panel disabled:opacity-40"
+            >
               <MonitorPlay className="h-3.5 w-3.5" />
               Preview
             </button>
-            <button className="flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium text-foreground/90 hover:bg-panel">
+            <button
+              onClick={handleShare}
+              disabled={!project}
+              className="flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium text-foreground/90 hover:bg-panel disabled:opacity-40"
+            >
               <Share2 className="h-3.5 w-3.5" />
               Share
             </button>
@@ -183,8 +236,17 @@ function Workspace() {
             <Sparkles className="h-3.5 w-3.5 text-brand" />
             Upgrade
           </button>
-          <div className="ml-1 flex h-8 w-8 items-center justify-center rounded-full bg-gradient-to-br from-pink-500 to-brand text-xs font-bold text-white">
-            T
+          <div className="relative ml-1">
+            <button
+              onClick={() => setProfileOpen((v) => !v)}
+              className="flex h-8 w-8 items-center justify-center rounded-full bg-gradient-to-br from-pink-500 to-brand text-xs font-bold text-white ring-offset-surface transition-all hover:ring-2 hover:ring-brand/50 hover:ring-offset-2"
+              aria-label="Profile menu"
+            >
+              T
+            </button>
+            {profileOpen && (
+              <ProfileDropdown onClose={() => setProfileOpen(false)} />
+            )}
           </div>
         </div>
 
@@ -476,8 +538,160 @@ function Workspace() {
           )}
         </main>
       </div>
+
+      {previewOpen && project && (
+        <PreviewModal project={project} onClose={() => setPreviewOpen(false)} initialId={selectedId} />
+      )}
     </div>
   );
+}
+
+function ProfileDropdown({ onClose }: { onClose: () => void }) {
+  useEffect(() => {
+    function onDoc(e: MouseEvent) {
+      const t = e.target as HTMLElement;
+      if (!t.closest("[data-profile-dropdown]")) onClose();
+    }
+    setTimeout(() => document.addEventListener("click", onDoc), 0);
+    return () => document.removeEventListener("click", onDoc);
+  }, [onClose]);
+
+  const items = [
+    { icon: UserIcon, label: "Account", hint: "Guest" },
+    { icon: Settings, label: "Settings" },
+    { icon: CreditCard, label: "Billing" },
+    { icon: HelpCircle, label: "Help & Support" },
+  ];
+  return (
+    <div
+      data-profile-dropdown
+      className="absolute right-0 top-11 z-50 w-64 overflow-hidden rounded-2xl border border-border bg-panel/95 shadow-2xl backdrop-blur"
+    >
+      <div className="flex items-center gap-3 border-b border-border p-4">
+        <div className="flex h-10 w-10 items-center justify-center rounded-full bg-gradient-to-br from-pink-500 to-brand text-sm font-bold text-white">
+          T
+        </div>
+        <div className="min-w-0">
+          <div className="truncate text-sm font-semibold">Guest Designer</div>
+          <div className="truncate text-xs text-muted-foreground">Sign in to save projects</div>
+        </div>
+      </div>
+      <div className="p-1">
+        {items.map((it) => (
+          <button
+            key={it.label}
+            onClick={() => {
+              toast.message(it.label, { description: "Coming soon" });
+              onClose();
+            }}
+            className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left text-sm hover:bg-surface"
+          >
+            <it.icon className="h-4 w-4 text-muted-foreground" />
+            <span className="flex-1">{it.label}</span>
+            {it.hint && <span className="text-[10px] text-muted-foreground">{it.hint}</span>}
+          </button>
+        ))}
+      </div>
+      <div className="border-t border-border p-1">
+        <button
+          onClick={() => {
+            toast.message("Sign in", { description: "Auth coming soon" });
+            onClose();
+          }}
+          className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left text-sm text-brand hover:bg-brand/10"
+        >
+          <LogOut className="h-4 w-4" />
+          Sign in
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function PreviewModal({
+  project,
+  onClose,
+  initialId,
+}: {
+  project: Project;
+  onClose: () => void;
+  initialId: string | null;
+}) {
+  const [id, setId] = useState<string>(initialId ?? project.screens[0]?.id ?? "");
+  const screen = project.screens.find((s) => s.id === id) ?? project.screens[0];
+
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") onClose();
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm">
+      <button
+        onClick={onClose}
+        className="absolute right-5 top-5 flex h-9 w-9 items-center justify-center rounded-full border border-border bg-panel/80 text-muted-foreground transition-colors hover:text-foreground"
+        aria-label="Close preview"
+      >
+        <X className="h-4 w-4" />
+      </button>
+      <div className="absolute left-5 top-5 flex items-center gap-2 text-sm">
+        <Sparkle className="h-4 w-4 text-brand" />
+        <span className="font-medium">Preview — {project.name}</span>
+      </div>
+
+      <div className="flex items-center gap-10">
+        <div className="pointer-events-auto flex max-h-[80vh] w-64 flex-col gap-1 overflow-y-auto rounded-2xl border border-border bg-panel/60 p-2">
+          {project.screens.map((s, i) => (
+            <button
+              key={s.id}
+              onClick={() => setId(s.id)}
+              className={`flex items-center gap-3 rounded-lg px-3 py-2 text-left text-xs transition-colors ${
+                s.id === id ? "bg-brand/20 text-foreground" : "text-muted-foreground hover:bg-surface"
+              }`}
+            >
+              <span className="w-5 font-mono text-[10px] text-brand">
+                {String(i + 1).padStart(2, "0")}
+              </span>
+              <span className="flex-1 truncate">{s.name}</span>
+            </button>
+          ))}
+        </div>
+
+        <PhoneFrame platform={project.platform} label={screen?.name ?? ""} index={0} selected={false}>
+          {screen && (
+            <ScreenRenderer screen={screen} ds={project.designSystem} platform={project.platform} />
+          )}
+        </PhoneFrame>
+      </div>
+    </div>
+  );
+}
+
+function generateProjectCode(project: Project): string {
+  const header = `// ${project.name}\n// Auto-generated from sleek.design\n// Idea: ${project.idea}\n\n`;
+  const ds = `export const designSystem = ${JSON.stringify(project.designSystem, null, 2)} as const;\n\n`;
+  const screens = project.screens
+    .map((s) => {
+      const compName = s.name.replace(/[^A-Za-z0-9]/g, "") || "Screen";
+      return `export function ${compName}Screen() {
+  // Role: ${s.role}
+  return (
+    <div style={{ background: designSystem.palette.background, color: designSystem.palette.text }}>
+      ${s.blocks
+        .map(
+          (b) =>
+            `{/* ${b.type} */}\n      <Block type=${JSON.stringify(b.type)} data={${JSON.stringify(b)}} />`,
+        )
+        .join("\n      ")}
+    </div>
+  );
+}\n`;
+    })
+    .join("\n");
+  return header + ds + screens;
 }
 
 function ExportDropdown({ project, onClose }: { project: Project | null; onClose: () => void }) {
