@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import { useEditorStore } from "@/store/editorStore";
 import { findEl, ensureIdsOnElement, sanitizeHtml, classifyElement } from "@/lib/pro/htmlUtils";
-import { PHONE_FRAME, PhoneFrameOutline, PhoneNotch } from "@/components/PhoneShell";
+import { PhoneScreenRenderer } from "@/components/PhoneScreenRenderer";
 import Toolbar from "@/components/editor/Toolbar";
 import ContextMenu from "@/components/editor/ContextMenu";
 
@@ -39,6 +39,7 @@ export default function Canvas() {
   const platform = _project?.platform === "android" ? "android" : "ios";
 
   const htmlVersion = useEditorStore((s) => s.htmlVersion);
+  const html = useEditorStore((s) => s.html);
   const selectedIds = useEditorStore((s) => s.selectedIds);
   const zoom = useEditorStore((s) => s.zoom);
   const pan = useEditorStore((s) => s.pan);
@@ -48,15 +49,6 @@ export default function Canvas() {
   const spaceDown = useEditorStore((s) => s.spaceDown);
   const pageMeta = useEditorStore((s) => s.page);
   const designSystemCss = useEditorStore((s) => s.designSystemCss);
-  // Wrap the project's design-system CSS so it applies ONLY inside the page
-  // container. `:root` inside a scope doesn't match the scoped root, so
-  // token declarations like `:root { --text: … }` would set nothing —
-  // rewrite `:root` to selectors that DO match inside the scope.
-  const scopedCss = designSystemCss
-    ? `@scope (.pro-canvas-page) to (.pro-canvas-page-boundary) {\n${
-        designSystemCss.replace(/(^|[\s,{}])(:root)\b/g, "$1:scope, .screen")
-      }\n}`
-    : "";
 
   const [rects, setRects] = useState([]);
   const [editing, setEditing] = useState(false);
@@ -119,7 +111,6 @@ export default function Canvas() {
   useEffect(() => {
     const page = pageRef.current;
     if (!page) return;
-    page.innerHTML = store().html || "";
 
     // CSS @media (max-width: N) rules evaluate against window.innerWidth, not
     // against our fixed-width canvas container. The canvas viewport is narrower
@@ -1372,49 +1363,20 @@ export default function Canvas() {
           transformOrigin: "0 0",
         }}
       >
-        <div
-          style={{
-            position: "relative",
-            width: isWebsite && frameWidth ? `${frameWidth}px` : `${PHONE_FRAME.width}px`,
-            height: isWebsite ? "auto" : `${PHONE_FRAME.height}px`,
-          }}
+        <PhoneScreenRenderer
+          platform={platform}
+          html={html || ""}
+          htmlVersion={htmlVersion}
+          css={designSystemCss}
+          isWebsite={isWebsite}
+          frameWidth={frameWidth}
+          pageRef={pageRef}
+          pageClassName="pro-canvas-page"
           onClickCapture={onPageClickCapture}
+          onDoubleClick={() => {
+            if (store().selectedId) startEditing();
+          }}
         >
-          {/* Phone chrome — shared with Lite's <PhoneFrame>, so only Pro tools differ. */}
-          {!isWebsite && (
-            <PhoneFrameOutline platform={platform} overlay />
-          )}
-          {!isWebsite && (
-            <PhoneNotch platform={platform} overlay />
-          )}
-          <div
-            ref={pageRef}
-            onDoubleClick={() => {
-              if (store().selectedId) startEditing();
-            }}
-            className="shadow-2xl pro-canvas-page"
-            style={{
-              position: "relative",
-              zIndex: 1,
-              display: "block",
-              overflow: "hidden",
-              background: "#000",
-              borderRadius: isWebsite ? 0 : PHONE_FRAME.contentRadius,
-              fontSize: "16px",
-              // Websites keep captured viewport width; screens use the phone frame.
-              width: isWebsite && frameWidth ? `${frameWidth}px` : `${PHONE_FRAME.width}px`,
-              height: isWebsite ? "auto" : `${PHONE_FRAME.height}px`,
-            }}
-            data-testid="canvas-page"
-          />
-          {scopedCss && (
-            <style
-              // Not part of the editable HTML — sibling of the page container,
-              // so it never lands in commitDom(pageRef.innerHTML).
-              // eslint-disable-next-line react/no-danger
-              dangerouslySetInnerHTML={{ __html: scopedCss }}
-            />
-          )}
 
           {/* smart alignment guides + distance indicators */}
           {guides.map((g, i) =>
@@ -1472,7 +1434,7 @@ export default function Canvas() {
               </div>
             );
           })}
-        </div>
+        </PhoneScreenRenderer>
       </div>
 
       {marquee && (
