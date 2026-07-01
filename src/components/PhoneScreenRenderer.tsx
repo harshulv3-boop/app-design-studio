@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, type CSSProperties, type MouseEventHandler, type ReactNode, type Ref } from "react";
+import { useLayoutEffect, useRef, type CSSProperties, type MouseEventHandler, type MutableRefObject, type ReactNode, type Ref } from "react";
 import DOMPurify from "dompurify";
 
 type Platform = "ios" | "android";
@@ -100,7 +100,7 @@ export function scopedPhoneScreenCss(css: string): string {
 function assignRef<T>(ref: Ref<T> | undefined, value: T | null) {
   if (!ref) return;
   if (typeof ref === "function") ref(value);
-  else ref.current = value;
+  else (ref as MutableRefObject<T | null>).current = value;
 }
 
 type PhoneScreenRendererProps = {
