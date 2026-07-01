@@ -778,18 +778,44 @@ function ExportDropdown({ project, onClose }: { project: Project | null; onClose
       <div className="mt-2 space-y-1">
         {[
           { icon: Code2, label: "Export Code", action: "code", enabled: true },
-          { icon: Figma, label: "Copy to Figma", action: "figma", enabled: false },
-          { icon: Download, label: "Download Screenshots", action: "shots", enabled: false },
+          { icon: Figma, label: "Export Figma JSON", action: "figma", enabled: true },
+          { icon: Download, label: "Download Project JSON", action: "json", enabled: true },
         ].map((item) => (
           <button
             key={item.action}
             disabled={disabled || !item.enabled}
             onClick={() => {
-              if (item.action === "code" && project) {
-                navigator.clipboard.writeText(JSON.stringify(project, null, 2));
-                toast.success("Project JSON copied to clipboard");
-              } else {
-                toast.message(item.label, { description: "Coming soon" });
+              if (!project) return;
+              if (item.action === "code") {
+                const code = generateProjectCode(project);
+                downloadFile(`${slug(project.name)}.tsx`, code, "text/plain");
+                toast.success("React component code downloaded");
+              } else if (item.action === "figma") {
+                // Figma REST-compatible frame payload (simplified)
+                const figma = {
+                  name: project.name,
+                  frames: project.screens.map((s) => ({
+                    name: s.name,
+                    width: 375,
+                    height: 812,
+                    background: project.designSystem.palette.background,
+                    layers: s.blocks,
+                  })),
+                  designSystem: project.designSystem,
+                };
+                downloadFile(
+                  `${slug(project.name)}.figma.json`,
+                  JSON.stringify(figma, null, 2),
+                  "application/json",
+                );
+                toast.success("Figma-ready JSON downloaded");
+              } else if (item.action === "json") {
+                downloadFile(
+                  `${slug(project.name)}.json`,
+                  JSON.stringify(project, null, 2),
+                  "application/json",
+                );
+                toast.success("Project JSON downloaded");
               }
               onClose();
             }}
@@ -803,4 +829,19 @@ function ExportDropdown({ project, onClose }: { project: Project | null; onClose
       </div>
     </div>
   );
+}
+
+function slug(s: string): string {
+  return s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "project";
+}
+function downloadFile(name: string, content: string, mime: string) {
+  const blob = new Blob([content], { type: mime });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = name;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
 }
