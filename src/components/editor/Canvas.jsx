@@ -46,6 +46,13 @@ export default function Canvas() {
   const tool = useEditorStore((s) => s.tool);
   const spaceDown = useEditorStore((s) => s.spaceDown);
   const pageMeta = useEditorStore((s) => s.page);
+  const designSystemCss = useEditorStore((s) => s.designSystemCss);
+  // Wrap the project's design-system CSS so it applies ONLY inside the page
+  // container. Uses CSS @scope so global-y selectors (body, :root) are ignored
+  // instead of leaking out and breaking the surrounding app chrome.
+  const scopedCss = designSystemCss
+    ? `@scope (.pro-canvas-page) to (.pro-canvas-page-boundary) {\n${designSystemCss}\n}`
+    : "";
 
   const [rects, setRects] = useState([]);
   const [editing, setEditing] = useState(false);
@@ -1370,7 +1377,7 @@ export default function Canvas() {
               // ran and set the correct selection.
               if (store().selectedId) startEditing();
             }}
-            className="shadow-2xl"
+            className="shadow-2xl pro-canvas-page"
             style={{
               position: "relative",
               display: "inline-block",
@@ -1381,6 +1388,14 @@ export default function Canvas() {
             }}
             data-testid="canvas-page"
           />
+          {scopedCss && (
+            <style
+              // Not part of the editable HTML — sibling of the page container,
+              // so it never lands in commitDom(pageRef.innerHTML).
+              // eslint-disable-next-line react/no-danger
+              dangerouslySetInnerHTML={{ __html: scopedCss }}
+            />
+          )}
 
           {/* smart alignment guides + distance indicators */}
           {guides.map((g, i) =>

@@ -47,6 +47,10 @@ export const useEditorStore = create((set, get) => ({
 
   // Canvas background color (applied to the viewport, not the page element)
   page: { background: "" },
+  // Shared design-system CSS (from the generated project). Rendered into the
+  // Pro canvas so screens look identical to Lite mode's HtmlScreen output.
+  designSystemCss: "",
+  setDesignSystemCss: (css) => set({ designSystemCss: css || "" }),
   setPage: (patch) => set((s) => {
     const newPage = { ...s.page, ...patch };
     if (s.inBatch) {
