@@ -29,9 +29,9 @@ function BlockView({ block, ds, platform }: { block: Block; ds: DesignSystem; pl
   switch (block.type) {
     case "status_bar":
       return (
-        <div className="flex items-center justify-between px-6 pb-1 pt-3 text-[11px] font-semibold" style={{ color: text }}>
+        <div className="flex items-center justify-between px-8 pb-1 pt-4 text-[11px] font-semibold" style={{ color: text }}>
           <span>{block.time || "9:41"}</span>
-          <div className="flex items-center gap-1 opacity-80">
+          <div className="flex items-center gap-1 pl-16 opacity-80">
             <Signal className="h-3 w-3" />
             <Wifi className="h-3 w-3" />
             <BatteryFull className="h-3.5 w-3.5" />
@@ -40,7 +40,7 @@ function BlockView({ block, ds, platform }: { block: Block; ds: DesignSystem; pl
       );
     case "nav_bar":
       return (
-        <div className="flex items-center justify-between px-5 pb-2 pt-3">
+        <div className="flex items-center justify-between px-5 pb-2 pt-5">
           <span className="w-8 truncate text-[13px]" style={{ color: muted }}>
             {block.leading || ""}
           </span>
