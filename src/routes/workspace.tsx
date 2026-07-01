@@ -86,12 +86,12 @@ function Workspace() {
   const bootstrapped = useRef(false);
 
   // ---- editor store wiring -------------------------------------------------
-  const editorHtml = useEditorStore((s) => s.html);
-  const reloadHtml = useEditorStore((s) => s.reloadHtml);
-  const undo = useEditorStore((s) => s.undo);
-  const redo = useEditorStore((s) => s.redo);
-  const canUndo = useEditorStore((s) => s.history.length > 0);
-  const canRedo = useEditorStore((s) => s.future.length > 0);
+  const editorHtml = useEditorStore((s: any) => s.html) as string;
+  const reloadHtml = useEditorStore((s: any) => s.reloadHtml) as (html: string) => void;
+  const undo = useEditorStore((s: any) => s.undo) as () => void;
+  const redo = useEditorStore((s: any) => s.redo) as () => void;
+  const canUndo = useEditorStore((s: any) => s.history.length > 0) as boolean;
+  const canRedo = useEditorStore((s: any) => s.future.length > 0) as boolean;
   const editorResetForScreen = useCallback(
     (html: string) => {
       const withIds = html ? ensureIds(html) : "";
