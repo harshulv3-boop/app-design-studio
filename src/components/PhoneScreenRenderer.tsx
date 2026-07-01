@@ -1,10 +1,70 @@
 import { useLayoutEffect, useRef, type CSSProperties, type MouseEventHandler, type ReactNode, type Ref } from "react";
 import DOMPurify from "dompurify";
-import { PHONE_FRAME, PhoneFrameOutline, PhoneNotch } from "@/components/PhoneShell";
 
 type Platform = "ios" | "android";
 
 export const PHONE_SCREEN_PAGE_CLASS = "phone-screen-page";
+
+export const PHONE_FRAME = {
+  width: 375,
+  height: 812,
+  borderWidth: 6,
+  iosOuterRadius: 52,
+  androidOuterRadius: 42,
+  contentRadius: 46,
+  notch: {
+    top: 8,
+    width: 100,
+    height: 26,
+  },
+} as const;
+
+function radiusFor(platform: Platform) {
+  return platform === "ios" ? PHONE_FRAME.iosOuterRadius : PHONE_FRAME.androidOuterRadius;
+}
+
+function PhoneNotch({ platform }: { platform: Platform }) {
+  if (platform !== "ios") return null;
+
+  return (
+    <div
+      aria-hidden
+      data-phone-notch
+      data-overlay
+      style={{
+        position: "absolute",
+        top: PHONE_FRAME.notch.top,
+        left: "50%",
+        width: PHONE_FRAME.notch.width,
+        height: PHONE_FRAME.notch.height,
+        transform: "translateX(-50%)",
+        borderRadius: 999,
+        background: "var(--phone-shell)",
+        pointerEvents: "none",
+        zIndex: 30,
+      }}
+    />
+  );
+}
+
+function PhoneFrameOutline({ platform }: { platform: Platform }) {
+  return (
+    <div
+      aria-hidden
+      data-phone-outline
+      data-overlay
+      style={{
+        position: "absolute",
+        inset: -PHONE_FRAME.borderWidth,
+        borderRadius: radiusFor(platform),
+        border: `${PHONE_FRAME.borderWidth}px solid var(--phone-frame-border)`,
+        background: "var(--phone-shell)",
+        pointerEvents: "none",
+        zIndex: 0,
+      }}
+    />
+  );
+}
 
 export function sanitizePhoneScreenHtml(html: string): string {
   return DOMPurify.sanitize(html || "", {
@@ -113,8 +173,8 @@ export function PhoneScreenRenderer({
       }}
       onClickCapture={onClickCapture}
     >
-      {!isWebsite && <PhoneFrameOutline platform={platform} overlay />}
-      {!isWebsite && <PhoneNotch platform={platform} overlay />}
+      {!isWebsite && <PhoneFrameOutline platform={platform} />}
+      {!isWebsite && <PhoneNotch platform={platform} />}
       <div
         ref={(node) => {
           localPageRef.current = node;
