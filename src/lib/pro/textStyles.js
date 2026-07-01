@@ -1,7 +1,7 @@
 // Reusable Text Styles library (Library > Text Styles). Persisted in localStorage
 // so styles are shared across projects. Applying a style writes all typography
 // properties onto the selected element (HTML remains the source of truth).
-import { loadGoogleFont } from "@/lib/fonts";
+import { loadGoogleFont } from "@/lib/pro/fonts";
 
 const KEY = "mae-text-styles";
 
