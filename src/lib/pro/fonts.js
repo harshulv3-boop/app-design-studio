@@ -1,5 +1,6 @@
-import { api } from "@/lib/api";
-import { invalidateFontCache } from "@/lib/imageExport";
+// Stubbed for Lovable — no backend fonts API or image export cache here.
+const api = { get: async () => ({ data: { fonts: [] } }) };
+const invalidateFontCache = () => {};
 
 let _fonts = null;
 let _inflight = null;
