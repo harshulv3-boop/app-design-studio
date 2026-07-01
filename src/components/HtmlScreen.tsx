@@ -13,6 +13,14 @@ function sanitize(html: string): string {
   });
 }
 
+// Shadow roots have no `:root` — selectors like `:root { --text: … }` from the
+// AI-generated design system silently match nothing, so every `var(--text)`
+// falls back to inherited/default and text renders faded. Rewrite `:root` to
+// selectors that DO match inside a shadow tree so tokens cascade correctly.
+function adaptCssForShadow(css: string): string {
+  return (css || "").replace(/(^|[\s,{}])(:root)\b/g, "$1:host, .screen, .pro-canvas-page");
+}
+
 type Props = {
   html: string;
   css: string;
@@ -31,7 +39,7 @@ export function HtmlScreen({ html, css, className }: Props) {
     const host = hostRef.current;
     if (!host) return;
     const shadow = host.shadowRoot ?? host.attachShadow({ mode: "open" });
-    shadow.innerHTML = `<style>${css}\n:host{display:block;width:100%;height:100%;}</style>${sanitize(html)}`;
+    shadow.innerHTML = `<style>${adaptCssForShadow(css)}\n:host{display:block;width:100%;height:100%;color:var(--text,inherit);background:var(--bg,transparent);}</style>${sanitize(html)}`;
   }, [html, css]);
 
   return <div ref={hostRef} className={className} style={{ width: "100%", height: "100%" }} />;
