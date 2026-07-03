@@ -9,14 +9,13 @@ export const useEditorStore = create((set, get) => ({
   // (initial load, undo/redo, AI edit). Plain DOM edits do NOT bump it.
   htmlVersion: 0,
 
-  // Multi-screen support: additional screens stored alongside main html
-  screens: [],           // [{id, name, html, image, created_at}]
-  activeScreenId: null,  // null = main screen; string = one of screens[].id
-  addScreenLocal: (screen) => set((s) => ({ screens: [...s.screens, screen], dirty: true })),
-  removeScreenLocal: (id) => set((s) => ({ screens: s.screens.filter((x) => x.id !== id), dirty: true })),
-  updateScreenLocal: (id, patch) =>
-    set((s) => ({ screens: s.screens.map((x) => x.id === id ? { ...x, ...patch } : x), dirty: true })),
-  setActiveScreenId: (id) => set({ activeScreenId: id }),
+  // Design-system CSS and palette tracked here so palette changes participate
+  // in undo/redo alongside canvas edits. Updated via commitDesignCss or undo/redo.
+  designSystemCss: "",
+  palette: null,
+  // Set by undo/redo when a CSS snapshot is restored; workspace subscribes to
+  // this to sync back into React project state. Cleared immediately after.
+  paletteRestored: null,
 
   selectedId: null,
   selectedIds: [],
@@ -88,6 +87,14 @@ export const useEditorStore = create((set, get) => ({
   generating: false,
   aiBusy: false,
 
+  // Live-save status for the navbar indicator. Kept in the store (not React
+  // component state) so updating it re-renders ONLY the tiny indicator that
+  // subscribes to it — never the Workspace/Canvas tree. Updating it from
+  // Workspace state instead caused a render→sync→setProject cascade (an
+  // infinite update loop) on direct page loads.
+  saveStatus: "saved",
+  setSaveStatus: (v) => set({ saveStatus: v }),
+
   setProject: (project) => set({ project }),
 
   // Full (re)load — imperatively re-renders the canvas.
@@ -104,6 +111,21 @@ export const useEditorStore = create((set, get) => ({
   // backward-compat with any persisted data that pre-dates this format.
   _snap: () => ({ html: get().html, page: get().page }),
   _fromSnap: (s) => typeof s === "string" ? { html: s, page: get().page } : s,
+
+  // Record a palette/CSS change in the shared undo history.
+  // oldCss/oldPalette are the state BEFORE the change (what undo will restore).
+  // newCss/newPalette are the incoming values (update designSystemCss so future
+  // canvas-edit snapshots capture the current CSS).
+  commitDesignCss: (newCss, newPalette, oldCss, oldPalette) => {
+    const { html, page, history } = get();
+    set({
+      designSystemCss: newCss,
+      palette: newPalette,
+      history: [...history, { html, page, css: oldCss, palette: oldPalette }].slice(-MAX_HISTORY),
+      future: [],
+      dirty: true,
+    });
+  },
 
   // DOM already reflects newHtml; just record history + sync string.
   // During a batch, intermediate calls only update html (no history entry).
@@ -153,14 +175,20 @@ export const useEditorStore = create((set, get) => ({
   },
 
   undo: () => {
-    const { history, future, html, page, _fromSnap } = get();
+    const { history, future, html, page, designSystemCss, palette, _fromSnap } = get();
     if (history.length === 0) return;
     const prev = _fromSnap(history[history.length - 1]);
+    const hasCss = prev.css !== undefined;
     set({
       html: prev.html,
       page: prev.page,
+      ...(hasCss ? {
+        designSystemCss: prev.css,
+        palette: prev.palette,
+        paletteRestored: { css: prev.css, palette: prev.palette },
+      } : {}),
       history: history.slice(0, -1),
-      future: [{ html, page }, ...future].slice(0, MAX_HISTORY),
+      future: [{ html, page, ...(hasCss ? { css: designSystemCss, palette } : {}) }, ...future].slice(0, MAX_HISTORY),
       htmlVersion: get().htmlVersion + 1,
       dirty: true,
       selectedId: null,
@@ -169,14 +197,20 @@ export const useEditorStore = create((set, get) => ({
   },
 
   redo: () => {
-    const { history, future, html, page, _fromSnap } = get();
+    const { history, future, html, page, designSystemCss, palette, _fromSnap } = get();
     if (future.length === 0) return;
     const next = _fromSnap(future[0]);
+    const hasCss = next.css !== undefined;
     set({
       html: next.html,
       page: next.page,
+      ...(hasCss ? {
+        designSystemCss: next.css,
+        palette: next.palette,
+        paletteRestored: { css: next.css, palette: next.palette },
+      } : {}),
       future: future.slice(1),
-      history: [...history, { html, page }].slice(-MAX_HISTORY),
+      history: [...history, { html, page, ...(hasCss ? { css: designSystemCss, palette } : {}) }].slice(-MAX_HISTORY),
       htmlVersion: get().htmlVersion + 1,
       dirty: true,
       selectedId: null,
@@ -218,7 +252,6 @@ export const useEditorStore = create((set, get) => ({
       } : {}),
       ...(cs?.colorStyles ? { colorStyles: cs.colorStyles } : {}),
       ...(cs?.styles ? { styles: cs.styles } : {}),
-      ...(cs?.screens ? { screens: cs.screens } : {}),
     }),
   canvasState: () => {
     const s = get();
@@ -252,6 +285,9 @@ export const useEditorStore = create((set, get) => ({
       project: null,
       html: "",
       htmlVersion: 0,
+      designSystemCss: "",
+      palette: null,
+      paletteRestored: null,
       selectedId: null,
       selectedIds: [],
       tool: "select",
@@ -271,8 +307,6 @@ export const useEditorStore = create((set, get) => ({
       page: { background: "" },
       colorStyles: [],
       styles: [],
-      screens: [],
-      activeScreenId: null,
       recentColors: [],
       dirty: false,
     }),

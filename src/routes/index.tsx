@@ -1,11 +1,119 @@
+import { PhoneScreenFrame } from "@/components/PhoneScreenFrame";
+import { deleteProject, listProjects, type ProjectSummary } from "@/lib/project-store";
 import { TEMPLATES } from "@/lib/templates";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { ChevronDown, Image as ImageIcon, Send, Sparkle, Sparkles, Zap } from "lucide-react";
-import { useState } from "react";
+import { ChevronDown, Clock, Image as ImageIcon, Layers, Send, Sparkle, Sparkles, Trash2, Zap } from "lucide-react";
+import { useEffect, useState } from "react";
 
 export const Route = createFileRoute("/")({
   component: Landing,
 });
+
+function timeAgo(ts: number): string {
+  if (!ts) return "";
+  const s = Math.floor((Date.now() - ts) / 1000);
+  if (s < 45) return "just now";
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h ago`;
+  const d = Math.floor(h / 24);
+  if (d < 7) return `${d}d ago`;
+  return new Date(ts).toLocaleDateString();
+}
+
+// Live preview of a saved project's first screen — reuses the real renderer,
+// scaled down to fit the card (no image generation needed).
+function ProjectThumbnail({ summary }: { summary: ProjectSummary }) {
+  const W = 168;
+  const scale = W / 375;
+  return (
+    <div
+      className="pointer-events-none overflow-hidden rounded-xl border border-border/70 bg-black"
+      style={{ width: W, height: Math.round(812 * scale) }}
+      aria-hidden
+    >
+      <div style={{ width: 375, height: 812, transform: `scale(${scale})`, transformOrigin: "top left" }}>
+        <PhoneScreenFrame
+          platform={summary.platform}
+          html={summary.firstScreenHtml}
+          css={summary.designSystemCss}
+        />
+      </div>
+    </div>
+  );
+}
+
+function SavedProjects({ onOpen }: { onOpen: (id: string) => void }) {
+  const [projects, setProjects] = useState<ProjectSummary[]>([]);
+
+  // localStorage is client-only — read after mount (SSR renders nothing).
+  useEffect(() => {
+    setProjects(listProjects());
+  }, []);
+
+  if (projects.length === 0) return null;
+
+  const remove = (id: string) => {
+    deleteProject(id);
+    setProjects((prev) => prev.filter((p) => p.id !== id));
+  };
+
+  return (
+    <section className="relative z-10 mx-auto max-w-7xl px-8 pb-6">
+      <div className="mb-6 flex items-center gap-2 text-[15px]">
+        <Layers className="h-4 w-4 text-brand" />
+        <span className="font-medium">Your projects</span>
+        <span className="text-sm text-muted-foreground">· pick up where you left off</span>
+      </div>
+      <div className="grid grid-cols-2 gap-5 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
+        {projects.map((p) => (
+          <div
+            key={p.id}
+            role="button"
+            tabIndex={0}
+            onClick={() => onOpen(p.id)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onOpen(p.id); }
+            }}
+            className="group relative flex cursor-pointer flex-col gap-3 rounded-2xl border border-border/70 bg-panel/60 p-3 text-left transition-all hover:border-brand/60 hover:bg-panel"
+            data-testid="saved-project-card"
+            data-project-id={p.id}
+          >
+            <div className="flex justify-center">
+              <ProjectThumbnail summary={p} />
+            </div>
+            <div className="px-1 pb-1">
+              <div className="flex items-center justify-between gap-2">
+                <div className="truncate text-sm font-semibold text-foreground">{p.name}</div>
+                <span className="shrink-0 rounded-full border border-border bg-surface/70 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider text-muted-foreground">
+                  {p.platform === "ios" ? "iOS" : "Android"}
+                </span>
+              </div>
+              <div className="mt-1.5 flex items-center gap-2 text-[11px] text-muted-foreground">
+                <span className="inline-flex items-center gap-1">
+                  <Clock className="h-3 w-3" />
+                  {timeAgo(p.updatedAt)}
+                </span>
+                <span className="text-border">·</span>
+                <span>{p.screenCount} screen{p.screenCount === 1 ? "" : "s"}</span>
+              </div>
+            </div>
+            <button
+              onClick={(e) => { e.stopPropagation(); remove(p.id); }}
+              className="absolute right-2 top-2 flex h-7 w-7 items-center justify-center rounded-full border border-border bg-surface/90 text-muted-foreground opacity-0 backdrop-blur transition-all hover:text-red-400 group-hover:opacity-100"
+              aria-label={`Delete ${p.name}`}
+              title="Delete project"
+              data-testid="saved-project-delete"
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+            </button>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
 
 function SleekLogo() {
   return (
@@ -27,6 +135,10 @@ function Landing() {
     if (!withIdea.trim()) return;
     const params = new URLSearchParams({ idea: withIdea, platform });
     navigate({ to: "/workspace", search: () => Object.fromEntries(params) });
+  }
+
+  function openProject(id: string) {
+    navigate({ to: "/workspace", search: () => ({ project: id }) });
   }
 
   return (
@@ -117,6 +229,9 @@ function Landing() {
           </div>
         </div>
       </section>
+
+      {/* Saved projects — appears only when the user has projects saved locally */}
+      <SavedProjects onOpen={openProject} />
 
       {/* Inspiration */}
       <section id="templates" className="relative z-10 mx-auto max-w-7xl px-8 pb-24">

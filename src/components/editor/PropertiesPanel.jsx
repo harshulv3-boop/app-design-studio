@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useCallback } from "react";
+import { createPortal } from "react-dom";
 import { toast } from "sonner";
 import { useEditorStore } from "@/store/editorStore";
 import { api } from "@/lib/pro/api";
@@ -20,8 +21,65 @@ import {
   AlignHorizontalDistributeCenter, AlignVerticalDistributeCenter,
   AlignLeft, AlignCenter, AlignRight, AlignJustify,
   List, ListOrdered, Underline, Strikethrough, Minus, WrapText,
-  ChevronDown, ChevronUp, BookMarked, Plus, Palette,
+  ChevronDown, ChevronUp, BookMarked, Plus, Palette, ExternalLink, X as XIcon, GripHorizontal,
 } from "lucide-react";
+
+// ── Floating draggable panel (used for detached EffectsPanel) ─────────────────
+function FloatingDraggablePanel({ title, onClose, children, initialPos }) {
+  const [pos, setPos] = useState(initialPos || { top: 120, left: window.innerWidth - 340 });
+  const posRef = useRef(pos);
+  posRef.current = pos;
+
+  const onGripMouseDown = useCallback((e) => {
+    e.preventDefault();
+    const ox = e.clientX - posRef.current.left;
+    const oy = e.clientY - posRef.current.top;
+    const onMove = (mv) => setPos({ left: mv.clientX - ox, top: mv.clientY - oy });
+    const onUp = () => { document.removeEventListener("mousemove", onMove); document.removeEventListener("mouseup", onUp); };
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", onUp);
+  }, []);
+
+  return (
+    <div
+      style={{
+        position: "fixed", top: pos.top, left: pos.left, zIndex: 9998,
+        width: 280, background: "#1c1c1e",
+        border: "1px solid rgba(255,255,255,0.12)", borderRadius: 10,
+        boxShadow: "0 24px 64px rgba(0,0,0,0.7), 0 4px 16px rgba(0,0,0,0.5)",
+        overflow: "hidden", fontSize: 12, color: "#e4e4e7",
+      }}
+      onKeyDown={(e) => e.stopPropagation()}
+    >
+      {/* Drag bar */}
+      <div
+        onMouseDown={onGripMouseDown}
+        style={{
+          display: "flex", alignItems: "center", justifyContent: "space-between",
+          padding: "8px 10px 6px", cursor: "grab", userSelect: "none",
+          borderBottom: "1px solid rgba(255,255,255,0.08)", background: "rgba(255,255,255,0.03)",
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          <GripHorizontal size={13} style={{ color: "rgba(255,255,255,0.3)" }} />
+          <span style={{ fontSize: 11, fontWeight: 600, letterSpacing: "0.06em", textTransform: "uppercase", color: "#71717a" }}>
+            {title}
+          </span>
+        </div>
+        <button
+          onClick={onClose}
+          style={{ background: "none", border: "none", cursor: "pointer", color: "#52525b", display: "flex", padding: 2 }}
+          title="Dock back to panel"
+        >
+          <XIcon size={13} />
+        </button>
+      </div>
+      <div style={{ padding: "12px 12px 14px", maxHeight: 420, overflowY: "auto" }}>
+        {children}
+      </div>
+    </div>
+  );
+}
 
 const TEXT_LIKE_TAGS = new Set(["P","SPAN","H1","H2","H3","H4","H5","H6","LABEL","A","BUTTON","LI","TD","TH"]);
 
@@ -724,6 +782,7 @@ export default function PropertiesPanel() {
   const [tag, setTag] = useState("");
   const [maeType, setMaeType] = useState("");
   const [prompt, setPrompt] = useState("");
+  const [effectsFloat, setEffectsFloat] = useState(false);
   const imgInputRef = useRef(null);
   const promptRef = useRef(null);
 
@@ -1057,6 +1116,14 @@ export default function PropertiesPanel() {
           <div className="border-b border-white/10 px-4 py-3.5">
             <div className="flex items-center justify-between mb-3">
               <div className="text-[10px] font-medium tracking-wider uppercase text-zinc-500">Effects</div>
+              <button
+                onClick={() => setEffectsFloat((v) => !v)}
+                title={effectsFloat ? "Dock back" : "Open as floating panel"}
+                className={`p-1 rounded transition-colors ${effectsFloat ? "text-blue-400 bg-blue-400/10" : "text-zinc-600 hover:text-white hover:bg-white/10"}`}
+                data-testid="effects-float-btn"
+              >
+                <ExternalLink size={11} />
+              </button>
             </div>
             <div className="space-y-2">
               <Row label="Radius"><NumInput value={v.radius} onChange={(val) => set("radius", "border-radius", val, "px")} testid="prop-radius" /></Row>
@@ -1068,13 +1135,17 @@ export default function PropertiesPanel() {
             </div>
 
             {/* Figma-style effects (drop shadow, inner shadow, blur, glass, etc.) */}
-            <div className="mt-3 pt-3 border-t border-white/10">
-              <EffectsPanel
-                getEl={getEl}
-                apply={apply}
-                selKey={selectedId}
-              />
-            </div>
+            {!effectsFloat && (
+              <div className="mt-3 pt-3 border-t border-white/10">
+                <EffectsPanel getEl={getEl} apply={apply} selKey={selectedId} />
+              </div>
+            )}
+            {effectsFloat && createPortal(
+              <FloatingDraggablePanel title="Effects" onClose={() => setEffectsFloat(false)}>
+                <EffectsPanel getEl={getEl} apply={apply} selKey={selectedId} />
+              </FloatingDraggablePanel>,
+              document.body
+            )}
           </div>
 
         </div>

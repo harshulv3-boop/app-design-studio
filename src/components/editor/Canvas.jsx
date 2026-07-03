@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import { useEditorStore } from "@/store/editorStore";
 import { findEl, ensureIdsOnElement, sanitizeHtml, classifyElement } from "@/lib/pro/htmlUtils";
-import { PhoneScreenRenderer } from "@/components/PhoneScreenRenderer";
+import { PhoneScreenFrame } from "@/components/PhoneScreenFrame";
+import { PHONE_FRAME } from "@/components/PhoneScreenRenderer";
 import Toolbar from "@/components/editor/Toolbar";
 import ContextMenu from "@/components/editor/ContextMenu";
 
@@ -57,6 +58,18 @@ export default function Canvas() {
   const [marquee, setMarquee] = useState(null);
   const [ctx, setCtx] = useState(null);
   const [guides, setGuides] = useState([]);
+  // Below-the-fold scrolling. The phone screen keeps its NATIVE layout: a fixed
+  // 375x812 flex column with a pinned header (status/nav) and a pinned bottom
+  // tab bar, and a scrolling content region in between. We drive that content
+  // region's scrollTop from a custom scrollbar beside the frame (never native
+  // wheel/touch inside the phone, so it never conflicts with select/drag). The
+  // header and tab bar stay pinned exactly like a real phone.
+  const [scrollY, setScrollY] = useState(0);
+  const [maxScroll, setMaxScroll] = useState(0);
+  const [scrollClient, setScrollClient] = useState(PHONE_FRAME.height);
+  const scrollTargetRef = useRef(null);
+  const scrollBarDragRef = useRef(null);
+  const scrollObsRef = useRef(null);
   const dragRef = useRef(null);
   const panRef = useRef(null);
   const marqueeRef = useRef(null);
@@ -109,6 +122,58 @@ export default function Canvas() {
     setRects(next);
   }, []);
 
+  // ---- below-the-fold scroll --------------------------------------------
+  // Find the inner content region that scrolls — the flex-growing area between
+  // the pinned header and the pinned tab bar. We pick the descendant with the
+  // largest vertical overflow whose overflowY permits scrolling (auto/scroll/
+  // hidden — overflow:hidden is still programmatically scrollable). Driving
+  // THIS element's scrollTop (never the whole screen) is what keeps the header
+  // and tab bar pinned, exactly like a native phone.
+  const findScrollEl = useCallback(() => {
+    const page = pageRef.current;
+    if (!page) return null;
+    let best = null;
+    let bestOver = 4; // ignore sub-pixel overflow
+    page.querySelectorAll("*").forEach((el) => {
+      const over = el.scrollHeight - el.clientHeight;
+      if (over <= bestOver) return;
+      const oy = getComputedStyle(el).overflowY;
+      if (oy === "auto" || oy === "scroll" || oy === "hidden") {
+        bestOver = over;
+        best = el;
+      }
+    });
+    return best;
+  }, []);
+
+  const measureScroll = useCallback(() => {
+    const el = scrollTargetRef.current;
+    if (!el || !pageRef.current?.contains(el)) {
+      setMaxScroll(0);
+      return;
+    }
+    const max = Math.max(0, el.scrollHeight - el.clientHeight);
+    setMaxScroll(max);
+    setScrollClient(el.clientHeight || PHONE_FRAME.height);
+    if (el.scrollTop > max) {
+      el.scrollTop = max;
+      setScrollY(max);
+    }
+  }, []);
+
+  // Set the content region's scroll position, then recompute overlays so
+  // selection boxes / handles / guides track the moved elements (they all read
+  // live getBoundingClientRect, which already reflects scrollTop).
+  const setScroll = useCallback((y) => {
+    const el = scrollTargetRef.current;
+    if (!el) return;
+    const max = Math.max(0, el.scrollHeight - el.clientHeight);
+    const clamped = clamp(y, 0, max);
+    el.scrollTop = clamped;
+    setScrollY(clamped);
+    recompute();
+  }, [recompute]);
+
   // ---- imperative (re)render
   useEffect(() => {
     const page = pageRef.current;
@@ -137,7 +202,27 @@ export default function Canvas() {
     }
 
     setEditing(false);
+    // New screen/content: locate its scrolling content region, reset to the top.
+    setScrollY(0);
+    setMaxScroll(0);
+    scrollTargetRef.current = null;
+    scrollObsRef.current?.disconnect();
+    scrollObsRef.current = null;
     requestAnimationFrame(() => {
+      const scrollEl = findScrollEl();
+      scrollTargetRef.current = scrollEl;
+      if (scrollEl) {
+        scrollEl.scrollTop = 0;
+        // Re-measure when the content region's height changes (edits, image
+        // loads, font swaps).
+        if (typeof ResizeObserver !== "undefined") {
+          const ro = new ResizeObserver(() => measureScroll());
+          ro.observe(scrollEl);
+          if (scrollEl.firstElementChild) ro.observe(scrollEl.firstElementChild);
+          scrollObsRef.current = ro;
+        }
+      }
+      measureScroll();
       if (store().fitOnLoad) {
         if (isWebsite) {
           // Websites scroll vertically — fit to width only, not height.
@@ -168,7 +253,9 @@ export default function Canvas() {
 
   useEffect(() => {
     recompute();
-  }, [selectedIds, zoom, pan, recompute]);
+    measureScroll();
+  }, [selectedIds, zoom, pan, recompute, measureScroll]);
+
 
   // Canvas background is applied inline on the viewport div via JSX style below.
 
@@ -180,6 +267,9 @@ export default function Canvas() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, []);
+
+  // Tear down the scroll ResizeObserver on unmount.
+  useEffect(() => () => scrollObsRef.current?.disconnect(), []);
 
   // ============================================================ OPERATIONS
   const fitToScreen = useCallback(() => {
@@ -798,7 +888,11 @@ export default function Canvas() {
     };
     const rawHits = document.elementsFromPoint(e.clientX, e.clientY)
       .filter((el) => page.contains(el) && el !== page && el.hasAttribute("data-mae-id"));
-    rawHits.sort((a, b) => depthOf(a) - depthOf(b));
+    // Deepest-first: a fresh click selects the most specific element actually
+    // under the cursor (the clicked child), not the outermost screen wrapper.
+    // Clicking empty screen background still resolves to the screen (only hit),
+    // and repeat clicks at the same spot cycle outward to the parent.
+    rawHits.sort((a, b) => depthOf(b) - depthOf(a));
 
     if (e.shiftKey) {
       // Toggle the shallowest element at the click point.
@@ -841,7 +935,7 @@ export default function Canvas() {
         const depthOf = (el) => { let d = 0, cur = el; while (cur && cur !== page) { d++; cur = cur.parentElement; } return d; };
         const rawHits = document.elementsFromPoint(e.clientX, e.clientY)
           .filter((el) => page.contains(el) && el !== page && el.hasAttribute("data-mae-id"));
-        rawHits.sort((a, b) => depthOf(a) - depthOf(b));
+        rawHits.sort((a, b) => depthOf(b) - depthOf(a));
         if (rawHits.length > 1) {
           const candidates = rawHits.map((el) => el.getAttribute("data-mae-id"));
           const cx = cycleRef.current;
@@ -1322,6 +1416,52 @@ export default function Canvas() {
     setCtx({ x: e.clientX, y: e.clientY });
   };
 
+  // ---- custom scrollbar (drives the content region's scrollTop) ------------
+  // Geometry mirrors the frame's on-screen box: frame top-left is (pan.x, pan.y)
+  // and it renders at PHONE_FRAME size * zoom (transformOrigin 0 0 on wrapper).
+  // Thumb size = visible fraction of the scrolling content region.
+  const barTrackH = PHONE_FRAME.height * zoom;
+  const barVisibleFrac = maxScroll > 0
+    ? scrollClient / (scrollClient + maxScroll)
+    : 1;
+  const barThumbH = Math.min(barTrackH, Math.max(28, barTrackH * barVisibleFrac));
+  const barThumbTop = maxScroll > 0
+    ? (scrollY / maxScroll) * (barTrackH - barThumbH)
+    : 0;
+  const barLeft = pan.x + PHONE_FRAME.width * zoom + 18;
+  const barTop = pan.y;
+
+  const onScrollThumbPointerDown = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    scrollBarDragRef.current = {
+      startY: e.clientY,
+      startScroll: scrollY,
+      travel: barTrackH - barThumbH,
+    };
+    window.addEventListener("pointermove", onScrollThumbMove);
+    window.addEventListener("pointerup", onScrollThumbUp);
+  };
+  const onScrollThumbMove = (e) => {
+    const d = scrollBarDragRef.current;
+    if (!d || d.travel <= 0) return;
+    const dy = e.clientY - d.startY;
+    setScroll(d.startScroll + (dy / d.travel) * maxScroll);
+  };
+  const onScrollThumbUp = () => {
+    scrollBarDragRef.current = null;
+    window.removeEventListener("pointermove", onScrollThumbMove);
+    window.removeEventListener("pointerup", onScrollThumbUp);
+  };
+  const onScrollTrackPointerDown = (e) => {
+    // Click on the track above/below the thumb pages the view by one frame.
+    if (e.target !== e.currentTarget) return;
+    const r = e.currentTarget.getBoundingClientRect();
+    const clickY = e.clientY - r.top;
+    const dir = clickY < barThumbTop ? -1 : 1;
+    setScroll(scrollY + dir * PHONE_FRAME.height);
+  };
+
   const cursor = spaceDown || tool === "hand"
     ? "grab"
     : ["text", "rect", "frame", "ellipse", "image"].includes(tool)
@@ -1359,26 +1499,24 @@ export default function Canvas() {
         data-testid="canvas-image-input"
       />
 
-      <div
-        style={{
+      <PhoneScreenFrame
+        wrapperStyle={{
           transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
           transformOrigin: "0 0",
         }}
+        platform={platform}
+        html={html || ""}
+        htmlVersion={htmlVersion}
+        css={designSystemCss}
+        isWebsite={isWebsite}
+        frameWidth={frameWidth}
+        pageRef={pageRef}
+        pageClassName="pro-canvas-page"
+        onClickCapture={onPageClickCapture}
+        onDoubleClick={() => {
+          if (store().selectedId) startEditing();
+        }}
       >
-        <PhoneScreenRenderer
-          platform={platform}
-          html={html || ""}
-          htmlVersion={htmlVersion}
-          css={designSystemCss}
-          isWebsite={isWebsite}
-          frameWidth={frameWidth}
-          pageRef={pageRef}
-          pageClassName="pro-canvas-page"
-          onClickCapture={onPageClickCapture}
-          onDoubleClick={() => {
-            if (store().selectedId) startEditing();
-          }}
-        >
 
           {/* smart alignment guides + distance indicators */}
           {guides.map((g, i) =>
@@ -1436,8 +1574,47 @@ export default function Canvas() {
               </div>
             );
           })}
-        </PhoneScreenRenderer>
-      </div>
+        </PhoneScreenFrame>
+
+      {/* Custom scrollbar — reveals below-the-fold content without native
+          wheel/touch scroll inside the phone (avoids select/drag conflicts).
+          Sits beside the frame and scales/moves with pan + zoom. */}
+      {maxScroll > 1 && (
+        <div
+          onPointerDown={onScrollTrackPointerDown}
+          data-overlay
+          data-testid="canvas-scrollbar"
+          style={{
+            position: "absolute",
+            left: barLeft,
+            top: barTop,
+            width: 10,
+            height: barTrackH,
+            borderRadius: 999,
+            background: "rgba(255,255,255,0.06)",
+            border: "1px solid rgba(255,255,255,0.10)",
+            boxSizing: "border-box",
+            cursor: "pointer",
+            zIndex: 5,
+          }}
+        >
+          <div
+            onPointerDown={onScrollThumbPointerDown}
+            data-testid="canvas-scrollbar-thumb"
+            style={{
+              position: "absolute",
+              left: 1,
+              right: 1,
+              top: barThumbTop,
+              height: barThumbH,
+              borderRadius: 999,
+              background: scrollBarDragRef.current ? "rgba(255,255,255,0.75)" : "rgba(255,255,255,0.42)",
+              cursor: "grab",
+              transition: "background .12s",
+            }}
+          />
+        </div>
+      )}
 
       {marquee && (
         <div

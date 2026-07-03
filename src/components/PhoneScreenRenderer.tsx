@@ -88,6 +88,17 @@ export function scopedPhoneScreenCss(css: string): string {
   height: 100%;
   box-sizing: border-box;
   font-size: 16px;
+  /* Pin text-align so the screen never inherits it from the wrapper element.
+     Lite renders inside a <button> (UA default text-align: center) while Pro
+     renders inside a <div> (text-align: start); without this, identical
+     screens diverge — centered in Lite, left in Pro. Design-system CSS and
+     per-element styles can still override this. */
+  text-align: left;
+  /* Establish a containing block so position:fixed / width:100vw descendants
+     (e.g. a bottom tab bar) are sized and clipped to the phone frame instead
+     of escaping to the browser viewport. */
+  transform: translateZ(0);
+  contain: layout paint;
   color: var(--text, inherit);
   background: var(--bg, #000);
 }
@@ -206,7 +217,20 @@ export function PhoneScreenRenderer({
           dangerouslySetInnerHTML={{ __html: scopedPhoneScreenCss(css) }}
         />
       )}
-      {children}
+      {/* Interactive overlay layer (Pro selection boxes / drag+resize handles /
+          guides). MUST paint above the page content (which has zIndex:1) or
+          pointer-downs land on the rendered HTML instead of the handles and
+          drag/resize never start. The layer itself is click-through
+          (pointer-events:none); individual handles opt back in with
+          pointer-events:auto. */}
+      {children != null && children !== false && (
+        <div
+          data-overlay-layer
+          style={{ position: "absolute", inset: 0, zIndex: 2, pointerEvents: "none" }}
+        >
+          {children}
+        </div>
+      )}
     </div>
   );
 }

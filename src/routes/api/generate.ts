@@ -80,12 +80,34 @@ type Phase1 = {
   screens: { id: string; name: string; role: string }[];
 };
 
-async function runModel(model: ReturnType<ReturnType<typeof createLovableAiGatewayProvider>>, system: string, prompt: string, retries = 3): Promise<string> {
+type Usage = { input: number; output: number; total: number };
+const ZERO_USAGE: Usage = { input: 0, output: 0, total: 0 };
+function readUsage(u: any): Usage {
+  // ai SDK v5+ uses inputTokens/outputTokens; older uses promptTokens/completionTokens.
+  const input = u?.inputTokens ?? u?.promptTokens ?? 0;
+  const output = u?.outputTokens ?? u?.completionTokens ?? 0;
+  const total = u?.totalTokens ?? input + output;
+  return { input, output, total };
+}
+function addUsage(a: Usage, b: Usage): Usage {
+  return { input: a.input + b.input, output: a.output + b.output, total: a.total + b.total };
+}
+
+// Running total across every model call this server process has made — lets us
+// compare our SDK-reported totals directly against Gemini's dashboard.
+let SESSION = { calls: 0, input: 0, output: 0, total: 0 };
+
+async function runModel(model: ReturnType<ReturnType<typeof createLovableAiGatewayProvider>>, system: string, prompt: string, retries = 3): Promise<{ text: string; usage: Usage }> {
   let lastErr: unknown = null;
   for (let attempt = 0; attempt < retries; attempt++) {
     try {
       const r = await generateText({ model, system, prompt });
-      return r.text;
+      const usage = readUsage(r.usage);
+      SESSION = { calls: SESSION.calls + 1, input: SESSION.input + usage.input, output: SESSION.output + usage.output, total: SESSION.total + usage.total };
+      // Log the RAW usage object too — surfaces any extra fields Google bills
+      // (reasoning/thinking tokens, cached input) that our totals might miss.
+      console.log(`[token-usage] call @ ${new Date().toISOString()} | in=${usage.input} out=${usage.output} total=${usage.total} | raw=${JSON.stringify(r.usage)} | SESSION calls=${SESSION.calls} in=${SESSION.input} out=${SESSION.output} total=${SESSION.total}`);
+      return { text: r.text, usage };
     } catch (err) {
       lastErr = err;
       const msg = err instanceof Error ? err.message : String(err);
@@ -130,8 +152,9 @@ Preserve the outer <div class="screen" data-screen-id="..."> wrapper.
 Keep using the provided design-system CSS variables/classes; do not redefine tokens.
 Make ONLY the change the user asked for; leave the rest as-is.`;
             const prompt = `Design system CSS (context, do not modify):\n${body.designSystemCss ?? ""}\n\nApp: ${body.projectContext?.name ?? ""} (${body.projectContext?.platform ?? "ios"})\n\nInstruction:\n${body.instruction}\n\nCurrent screen HTML:\n${body.screenHtml}`;
-            const text = await runModel(model, system, prompt);
-            return Response.json({ html: extractHtml(text) });
+            const { text, usage } = await runModel(model, system, prompt);
+            console.log(`[token-usage] refine  | input=${usage.input} output=${usage.output} total=${usage.total}`);
+            return Response.json({ html: extractHtml(text), usage: { mode: "refine", calls: 1, ...usage } });
           }
 
           // generate
@@ -139,21 +162,38 @@ Make ONLY the change the user asked for; leave the rest as-is.`;
           const platform = body.platform ?? "ios";
 
           // Phase 1: shared design system + screen manifest
-          const p1raw = await runModel(model, systemPhase1(), `App idea: ${idea}\nTarget platform: ${platform}`);
+          const p1res = await runModel(model, systemPhase1(), `App idea: ${idea}\nTarget platform: ${platform}`);
+          const p1raw = p1res.text;
           const p1 = extractJson(p1raw) as Phase1;
           if (!p1?.designSystemCss || !Array.isArray(p1.screens) || p1.screens.length === 0) {
             return Response.json({ error: "Phase 1 output invalid", raw: p1raw.slice(0, 500) }, { status: 502 });
           }
 
           // Phase 2: per-screen HTML in parallel
-          const screensOut = await Promise.all(
+          const screensRaw = await Promise.all(
             p1.screens.map(async (s, i) => {
               const others = p1.screens.map((x, idx) => `${idx + 1}. ${x.name} — ${x.role}`).join("\n");
               const prompt = `App: ${p1.name} (${p1.platform})\nIdea: ${idea}\n\nAll screens in this app:\n${others}\n\nGenerate screen #${i + 1}: "${s.name}" (role: ${s.role}, id: ${s.id}).\n\nDesign system CSS you MUST use:\n${p1.designSystemCss}`;
-              const text = await runModel(model, systemPhase2(), prompt);
-              const html = extractHtml(text);
-              return { id: s.id, name: s.name, role: s.role, html };
+              const r2 = await runModel(model, systemPhase2(), prompt);
+              return { id: s.id, name: s.name, role: s.role, html: extractHtml(r2.text), usage: r2.usage };
             }),
+          );
+          const screensOut = screensRaw.map(({ usage: _u, ...s }) => s);
+
+          // Aggregate token usage: phase 1 + every phase-2 screen call.
+          const phase2Usage = screensRaw.reduce((acc, s) => addUsage(acc, s.usage), ZERO_USAGE);
+          const totalUsage = addUsage(p1res.usage, phase2Usage);
+          const usageReport = {
+            mode: "generate",
+            calls: 1 + screensRaw.length,
+            phase1: p1res.usage,
+            phase2_per_screen: screensRaw.map((s) => ({ screen: s.name, ...s.usage })),
+            phase2_total: phase2Usage,
+            total: totalUsage,
+          };
+          console.log(
+            `[token-usage] generate | screens=${screensRaw.length} calls=${usageReport.calls} ` +
+            `phase1(total=${p1res.usage.total}) phase2(total=${phase2Usage.total}) => GRAND TOTAL input=${totalUsage.input} output=${totalUsage.output} total=${totalUsage.total}`,
           );
 
           const project: Project = {
@@ -175,7 +215,7 @@ Make ONLY the change the user asked for; leave the rest as-is.`;
             console.error("Project validation failed", parsed.error.flatten());
             return Response.json({ error: "Model output failed validation", details: parsed.error.flatten() }, { status: 502 });
           }
-          return Response.json({ project: parsed.data });
+          return Response.json({ project: parsed.data, usage: usageReport });
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
           return Response.json({ error: message }, { status: 502 });

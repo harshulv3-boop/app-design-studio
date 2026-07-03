@@ -1,11 +1,14 @@
-import { PhoneScreenRenderer } from "@/components/PhoneScreenRenderer";
+import { PhoneScreenFrame } from "@/components/PhoneScreenFrame";
+import ColorPickerComponent from "@/components/editor/ColorPicker";
 import { ensureIds } from "@/lib/pro/htmlUtils";
-import { loadProject, saveProject } from "@/lib/project-store";
+import { applyInteractionToHtml, clearInteractionFromHtml } from "@/lib/pro/prototype";
+import { loadProject, loadProjectById, saveProject } from "@/lib/project-store";
 import type { Project } from "@/lib/screen-schema";
 import { useEditorStore } from "@/store/editorStore";
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import {
   ArrowUp,
+  Check,
   ChevronDown,
   ChevronRight,
   Code2,
@@ -31,21 +34,35 @@ import {
   X,
   Zap,
 } from "lucide-react";
-import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 import { toast } from "sonner";
 
 // Pro-mode editor pieces (lazy — big bundle we only need on desktop).
 const Canvas = lazy(() => import("@/components/editor/Canvas"));
 const LayersPanel = lazy(() => import("@/components/editor/LayersPanel"));
 const PropertiesPanel = lazy(() => import("@/components/editor/PropertiesPanel"));
+// Connect-mode (prototype) pieces — lazy.
+const FlowCanvas = lazy(() => import("@/components/flow/FlowCanvas"));
+const PrototypePanel = lazy(() => import("@/components/flow/PrototypePanel"));
 
-type Search = { idea?: string; platform?: "ios" | "android"; share?: string };
+// Palette key → CSS variable name (matches Phase-1 system prompt).
+const PALETTE_CSS_VAR: Record<string, string> = {
+  background: "--bg",
+  surface: "--surface",
+  text: "--text",
+  muted: "--muted",
+  accent: "--accent",
+  accentText: "--accent-text",
+};
+
+type Search = { idea?: string; platform?: "ios" | "android"; share?: string; project?: string };
 
 export const Route = createFileRoute("/workspace")({
   validateSearch: (s: Record<string, unknown>): Search => ({
     idea: typeof s.idea === "string" ? s.idea : undefined,
     platform: s.platform === "android" ? "android" : s.platform === "ios" ? "ios" : undefined,
     share: typeof s.share === "string" ? s.share : undefined,
+    project: typeof s.project === "string" ? s.project : undefined,
   }),
   component: Workspace,
 });
@@ -69,7 +86,8 @@ function decodeShare(s: string): Project | null {
 }
 
 function Workspace() {
-  const { idea, platform: platformParam, share } = Route.useSearch();
+  const { idea, platform: platformParam, share, project: projectIdParam } = Route.useSearch();
+  const navigate = useNavigate();
   const [project, setProject] = useState<Project | null>(null);
   const [status, setStatus] = useState<"idle" | "generating" | "refining">("idle");
   const [chat, setChat] = useState<ChatMsg[]>([]);
@@ -79,14 +97,20 @@ function Workspace() {
   const [profileOpen, setProfileOpen] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
   const [tab, setTab] = useState<"chat" | "theme">("chat");
-  const [mode, setMode] = useState<"pro" | "lite">(() =>
+  const [mode, setMode] = useState<"pro" | "lite" | "connect">(() =>
     typeof window !== "undefined" && window.innerWidth >= 1024 ? "pro" : "lite",
   );
+  // Connect (prototype) mode state.
+  const [protoSelection, setProtoSelection] = useState<{ screenId: string; elId: string } | null>(null);
+  // Lite-mode element selection: click an element to target it for AI edits.
+  const [liteSel, setLiteSel] = useState<{ screenId: string; elId: string } | null>(null);
+  const [selectedConnection, setSelectedConnection] = useState<string | null>(null);
+  const [connectScreenId, setConnectScreenId] = useState<string | null>(null);
   const bootstrapped = useRef(false);
 
   // ---- editor store wiring -------------------------------------------------
   const editorHtml = useEditorStore((s: any) => s.html) as string;
-  const reloadHtml = useEditorStore((s: any) => s.reloadHtml) as (html: string) => void;
+  const loadHtml = useEditorStore((s: any) => s.loadHtml) as (html: string) => void;
   const undo = useEditorStore((s: any) => s.undo) as () => void;
   const redo = useEditorStore((s: any) => s.redo) as () => void;
   const canUndo = useEditorStore((s: any) => s.history.length > 0) as boolean;
@@ -94,9 +118,11 @@ function Workspace() {
   const editorResetForScreen = useCallback(
     (html: string) => {
       const withIds = html ? ensureIds(html) : "";
-      reloadHtml(withIds);
+      // loadHtml clears history — screen navigation must never appear in the
+      // undo stack (prevents black-render on undo and canvas/selector desync).
+      loadHtml(withIds);
     },
-    [reloadHtml],
+    [loadHtml],
   );
 
   // Keep the Pro editor's project reference in sync. The design-system CSS is
@@ -168,6 +194,9 @@ function Workspace() {
       setSelectedId(p.screens[0]?.id ?? null);
       lastLoadedRef.current = null;
       saveProject(p);
+      // Strip the ?idea param from the URL so a reload loads the saved project
+      // instead of regenerating from scratch.
+      navigate({ to: "/workspace", search: {}, replace: true });
       setChat((c) => [
         ...c,
         { role: "assistant", text: `Generated ${p.screens.length} screens for "${p.name}". Tell me what to change — colors, layout, copy, or edit directly in Pro mode.` },
@@ -195,17 +224,103 @@ function Workspace() {
       }
       toast.error("Shared link is invalid or from an older version.");
     }
+    // Opening a specific saved project from the Home page (?project=<id>).
+    if (projectIdParam) {
+      const p = loadProjectById(projectIdParam);
+      if (p && p.screens?.[0]?.html) {
+        setProject(p);
+        setSelectedId(p.screens[0]?.id ?? null);
+        const cs = (p as any).canvas_state;
+        if (cs) useEditorStore.getState().restore(cs);
+        setChat([{ role: "assistant", text: `Reopened "${p.name}". Pick up where you left off.` }]);
+        return;
+      }
+      toast.error("That project could not be found.");
+    }
     const saved = loadProject();
-    if (idea) {
-      generate(idea, platformParam ?? "ios");
-    } else if (saved && saved.screens?.[0]?.html) {
+    const savedIsCurrent = !!saved && saved.screens?.[0]?.html && (!idea || saved.idea === idea);
+    if (savedIsCurrent) {
+      // Load the saved project directly — NO AI call. Covers every reload path
+      // (hard refresh, reopened tab, back-nav) even if ?idea is still in the URL.
       setProject(saved);
       setSelectedId(saved.screens[0]?.id ?? null);
+      const cs = (saved as any).canvas_state;
+      if (cs) useEditorStore.getState().restore(cs);
+    } else if (idea) {
+      // Genuinely new idea (no matching saved project) → generate once.
+      generate(idea, platformParam ?? "ios");
     } else if (saved) {
       // Legacy block-based project — retire it silently.
       toast.message("Your previous project was on an older format", { description: "Start a new one to use the HTML editor." });
     }
-  }, [idea, platformParam, share, generate]);
+  }, [idea, platformParam, share, projectIdParam, generate]);
+
+  // ---- Autosave (debounced) — mirrors the reference editor's live-save -------
+  const projectRef = useRef<Project | null>(null);
+  projectRef.current = project;
+
+  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const didInitSaveRef = useRef(false);
+  // Live-save status lives in the editor store (not React state here) so that
+  // flipping it re-renders ONLY the navbar indicator, never this Workspace tree.
+  // Updating Workspace state here re-rendered Canvas, which wrote to the store,
+  // which re-entered the html-sync effects and called setProject — an infinite
+  // update loop on direct page loads. Routing status through the store avoids it.
+  const markSaving = () => (useEditorStore.getState() as any).setSaveStatus("saving");
+  const markSaved = () => (useEditorStore.getState() as any).setSaveStatus("saved");
+
+  // 1) Content autosave + the live-save indicator. Keyed on `project` ONLY.
+  //    The first assignment (initial load) is skipped so the indicator doesn't
+  //    flash "Saving…" on open.
+  useEffect(() => {
+    if (!project) return;
+    if (!didInitSaveRef.current) { didInitSaveRef.current = true; return; }
+    markSaving();
+    if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+    saveTimerRef.current = setTimeout(() => {
+      const cs = (useEditorStore.getState() as any).canvasState?.();
+      saveProject({ ...(project as any), canvas_state: cs } as Project);
+      markSaved();
+    }, 450);
+    return () => { if (saveTimerRef.current) clearTimeout(saveTimerRef.current); };
+  }, [project]);
+
+  // 2) Editor-only metadata (zoom / pan / layer names / locks / hidden /
+  //    color+text styles) — persist even when the project object didn't change.
+  useEffect(() => {
+    let t: ReturnType<typeof setTimeout> | null = null;
+    const unsub = useEditorStore.subscribe(() => {
+      if (!projectRef.current) return;
+      if (t) clearTimeout(t);
+      t = setTimeout(() => {
+        const cs = (useEditorStore.getState() as any).canvasState?.();
+        if (projectRef.current) saveProject({ ...(projectRef.current as any), canvas_state: cs } as Project);
+      }, 700);
+    });
+    return () => { if (t) clearTimeout(t); unsub(); };
+  }, []);
+
+  // 3) When undo/redo restores a palette CSS snapshot, sync it back into React
+  //    project state. paletteRestored is set ONLY by undo/redo (not by normal
+  //    palette edits), so this never creates a feedback loop.
+  useEffect(() => {
+    const unsub = useEditorStore.subscribe((state: any) => {
+      const restored = state.paletteRestored;
+      if (!restored) return;
+      useEditorStore.setState({ paletteRestored: null });
+      setProject((prev) => {
+        if (!prev || prev.designSystemCss === restored.css) return prev;
+        const next = {
+          ...prev,
+          designSystemCss: restored.css,
+          designSystem: { ...prev.designSystem, palette: restored.palette },
+        } as Project;
+        saveProject(next);
+        return next;
+      });
+    });
+    return unsub;
+  }, []);
 
   function handleShare() {
     if (!project) return;
@@ -221,8 +336,13 @@ function Workspace() {
     const screen = project.screens.find((s) => s.id === selectedId);
     if (!screen) return;
     const instruction = input.trim();
+    // If an element is selected in Lite, focus the AI edit on just that element.
+    const focused = liteSel && liteSel.screenId === selectedId;
+    const sentInstruction = focused
+      ? `${instruction}\n\n[Apply this change ONLY to the element with data-mae-id="${liteSel!.elId}"${liteSelLabel ? ` (the ${liteSelLabel})` : ""}. Keep every other element in the screen exactly as-is, including their data-mae-id attributes.]`
+      : instruction;
     setInput("");
-    setChat((c) => [...c, { role: "user", text: instruction }]);
+    setChat((c) => [...c, { role: "user", text: focused && liteSelLabel ? `${instruction}  ·  on ${liteSelLabel}` : instruction }]);
     setStatus("refining");
     try {
       const res = await fetch("/api/generate", {
@@ -230,7 +350,7 @@ function Workspace() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           mode: "refine",
-          instruction,
+          instruction: sentInstruction,
           screenHtml: screen.html,
           designSystemCss: project.designSystemCss,
           projectContext: { name: project.name, platform: project.platform },
@@ -260,6 +380,32 @@ function Workspace() {
     }
   }
 
+  // Update a single palette color instantly — no AI call.
+  // Patches both the designSystem.palette record and the CSS variable in
+  // designSystemCss so all screens (Lite and Pro) reflect the change immediately.
+  const updatePaletteColor = useCallback((key: string, hex: string) => {
+    setProject((prev) => {
+      if (!prev) return prev;
+      const varName = PALETTE_CSS_VAR[key] ?? `--${key}`;
+      const newCss = prev.designSystemCss.replace(
+        new RegExp(`(${varName}\\s*:\\s*)[^;\\n]+`, "g"),
+        `$1${hex}`,
+      );
+      const newPalette = { ...prev.designSystem.palette, [key]: hex };
+      // Push old CSS/palette to the shared undo history before overwriting.
+      (useEditorStore.getState() as any).commitDesignCss(
+        newCss, newPalette, prev.designSystemCss, prev.designSystem.palette,
+      );
+      const next = {
+        ...prev,
+        designSystem: { ...prev.designSystem, palette: newPalette },
+        designSystemCss: newCss,
+      } as Project;
+      saveProject(next);
+      return next;
+    });
+  }, []);
+
   function setPlatform(p: "ios" | "android") {
     if (!project) return;
     const next = { ...project, platform: p };
@@ -267,26 +413,161 @@ function Workspace() {
     saveProject(next);
   }
 
+  // ---- Connect (prototype) mode -------------------------------------------
+  const startScreen =
+    ((project as any)?.flowStart as string | undefined) || project?.screens[0]?.id || null;
+
+  // Elements need a stable data-mae-id to be addressable (Lite element select,
+  // Connect linking, Pro editing). Normalize any screen missing ids — idempotent.
+  useEffect(() => {
+    if (!project) return;
+    if (!project.screens.some((s) => s.html && !/data-mae-id/.test(s.html))) return;
+    setProject((prev) => {
+      if (!prev) return prev;
+      const next = { ...prev, screens: prev.screens.map((s) => ({ ...s, html: s.html ? ensureIds(s.html) : s.html })) };
+      saveProject(next);
+      return next;
+    });
+  }, [project]);
+
+  useEffect(() => {
+    if (mode === "connect" && !connectScreenId && project?.screens[0]) setConnectScreenId(project.screens[0].id);
+  }, [mode, connectScreenId, project]);
+
+  const applyInteraction = useCallback((screenId: string, elId: string, attrs: Record<string, unknown>) => {
+    setProject((prev) => {
+      if (!prev) return prev;
+      const next = {
+        ...prev,
+        screens: prev.screens.map((s) => (s.id === screenId ? { ...s, html: applyInteractionToHtml(s.html || "", elId, attrs) } : s)),
+      };
+      saveProject(next);
+      return next;
+    });
+  }, []);
+
+  const clearInteraction = useCallback((screenId: string, elId: string) => {
+    setProject((prev) => {
+      if (!prev) return prev;
+      const next = {
+        ...prev,
+        screens: prev.screens.map((s) => (s.id === screenId ? { ...s, html: clearInteractionFromHtml(s.html || "", elId) } : s)),
+      };
+      saveProject(next);
+      return next;
+    });
+  }, []);
+
+  const setStart = useCallback((screenId: string) => {
+    setProject((prev) => {
+      if (!prev) return prev;
+      const next = { ...(prev as any), flowStart: screenId } as Project;
+      saveProject(next);
+      return next;
+    });
+  }, []);
+
+  // Lite element selection: focus the screen and remember the targeted element.
+  const onLiteSelectElement = useCallback((screenId: string, elId: string | null) => {
+    setSelectedId(screenId);
+    setLiteSel(elId ? { screenId, elId } : null);
+  }, []);
+
+  // Human-readable label for the Lite-selected element (shown in the chat).
+  const liteSelLabel = useMemo(() => {
+    if (!liteSel) return null;
+    const s = project?.screens.find((x) => x.id === liteSel.screenId);
+    if (!s?.html) return null;
+    try {
+      const doc = new DOMParser().parseFromString(`<div id="__r">${s.html}</div>`, "text/html");
+      const el = doc.querySelector(`#__r [data-mae-id="${CSS.escape(liteSel.elId)}"]`);
+      if (!el) return null;
+      const txt = (el.textContent || "").trim();
+      return `${el.tagName.toLowerCase()}${txt ? ` · ${txt.slice(0, 22)}` : ""}`;
+    } catch {
+      return null;
+    }
+  }, [liteSel, project]);
+
   const selected = project?.screens.find((s) => s.id === selectedId) ?? null;
   const isBusy = status !== "idle";
 
-  // Keyboard: cmd/ctrl+Z undo, shift+cmd/ctrl+Z redo — global while in Pro mode.
+  // Keyboard shortcuts — active in Pro mode (the canvas editor). Ported from the
+  // reference editor so the full shortcut set is restored, not just undo/redo.
   useEffect(() => {
     if (mode !== "pro") return;
-    function onKey(e: KeyboardEvent) {
+    const isTyping = () => {
+      const el = document.activeElement as HTMLElement | null;
+      return !!el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.getAttribute("contenteditable") === "true");
+    };
+    const onKey = (e: KeyboardEvent) => {
+      const s = useEditorStore.getState() as any;
+      const ops = s.ops || {};
       const mod = e.metaKey || e.ctrlKey;
-      if (!mod) return;
-      if (e.key.toLowerCase() === "z") {
+      const typing = isTyping();
+
+      // Hold Space to pan.
+      if (e.code === "Space" && !typing && !mod) {
+        if (!s.spaceDown) s.setSpaceDown(true);
         e.preventDefault();
-        if (e.shiftKey) redo(); else undo();
-      } else if (e.key.toLowerCase() === "y") {
-        e.preventDefault();
-        redo();
+        return;
       }
-    }
+      if (typing) {
+        if (e.key === "Escape") (document.activeElement as HTMLElement | null)?.blur();
+        return;
+      }
+
+      if (mod) {
+        const k = e.key.toLowerCase();
+        if (k === "z") { e.preventDefault(); if (e.shiftKey) { s.redo(); } else { if (s.inBatch) s.endBatch(); s.undo(); } return; }
+        if (k === "s") { e.preventDefault(); if (project) saveProject(project); return; }
+        if (k === "y") { e.preventDefault(); s.redo(); return; }
+        if (k === "d") { e.preventDefault(); ops.duplicateSelected?.(); return; }
+        if (k === "c") { e.preventDefault(); ops.copySelected?.(); return; }
+        if (k === "x") { e.preventDefault(); ops.cut?.(); return; }
+        if (k === "v") { e.preventDefault(); ops.paste?.(); return; }
+        if (k === "a") { e.preventDefault(); ops.selectAll?.(); return; }
+        if (k === "k") { e.preventDefault(); if (s.selectedId) window.dispatchEvent(new CustomEvent("mae:focus-ai")); return; }
+        if (k === "g" && !e.shiftKey) { e.preventDefault(); ops.group?.(); return; }
+        if (k === "h" && e.shiftKey) { e.preventDefault(); s.selectedIds.forEach((id: string) => s.toggleHidden(id)); return; }
+        if (k === "l" && e.shiftKey) { e.preventDefault(); s.selectedIds.forEach((id: string) => s.toggleLock(id)); return; }
+        if (e.key === "=" || e.key === "+") { e.preventDefault(); ops.zoomIn?.(); return; }
+        if (e.key === "-" || e.key === "_") { e.preventDefault(); ops.zoomOut?.(); return; }
+        if (e.key === "]") { e.preventDefault(); e.shiftKey ? ops.bringToFront?.() : ops.bringForward?.(); return; }
+        if (e.key === "[") { e.preventDefault(); e.shiftKey ? ops.sendToBack?.() : ops.sendBackward?.(); return; }
+        return;
+      }
+
+      if (e.shiftKey && e.key === "1") { e.preventDefault(); ops.fitToScreen?.(); return; }
+      if (e.shiftKey && e.key === "2") { e.preventDefault(); ops.zoomToSelection?.(); return; }
+      if (e.shiftKey && (e.key === "0" || e.key === ")")) { e.preventDefault(); ops.resetZoom?.(); return; }
+      if (e.key === "Tab") { e.preventDefault(); e.shiftKey ? ops.selectPrev?.() : ops.selectNext?.(); return; }
+      if ((e.key === "Delete" || e.key === "Backspace") && s.selectedIds.length) { e.preventDefault(); ops.deleteSelected?.(); return; }
+      if (["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(e.key) && s.selectedIds.length) {
+        e.preventDefault();
+        const step = e.shiftKey ? 10 : 1;
+        const map: Record<string, [number, number]> = { ArrowUp: [0, -step], ArrowDown: [0, step], ArrowLeft: [-step, 0], ArrowRight: [step, 0] };
+        const [dx, dy] = map[e.key];
+        ops.nudge?.(dx, dy);
+        return;
+      }
+      if (e.key === "Enter" && s.selectedId) { e.preventDefault(); ops.startEditingSelected?.(); return; }
+      if (e.key === "F2" && s.selectedId) { e.preventDefault(); ops.startRename?.(); return; }
+      if (e.key === "Escape") { s.select(null); return; }
+      if (!e.shiftKey && !e.altKey) {
+        const toolMap: Record<string, string> = { v: "select", h: "hand", t: "text", f: "frame", r: "rect", o: "ellipse", i: "image" };
+        const t = toolMap[e.key.toLowerCase()];
+        if (t) { s.setTool(t); return; }
+      }
+    };
+    const onKeyUp = (e: KeyboardEvent) => { if (e.code === "Space") (useEditorStore.getState() as any).setSpaceDown(false); };
     window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [mode, undo, redo]);
+    window.addEventListener("keyup", onKeyUp);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      window.removeEventListener("keyup", onKeyUp);
+    };
+  }, [mode, project]);
 
   return (
     <div className="flex h-screen w-full flex-col overflow-hidden bg-surface text-foreground">
@@ -307,12 +588,13 @@ function Workspace() {
           <span className="font-medium">
             {project?.name ?? (isBusy ? "Generating…" : "Untitled Project")}
           </span>
+          {project && <SaveIndicator />}
         </div>
 
         <div className="flex items-center gap-2">
           {/* Mode toggle */}
           <div className="flex items-center gap-1 rounded-full border border-border bg-panel/40 p-1">
-            {(["lite", "pro"] as const).map((m) => (
+            {(["lite", "pro", "connect"] as const).map((m) => (
               <button
                 key={m}
                 onClick={() => setMode(m)}
@@ -321,7 +603,8 @@ function Workspace() {
                 }`}
               >
                 {m === "pro" && <Zap className="h-3 w-3" />}
-                {m === "pro" ? "Pro" : "Lite"}
+                {m === "connect" && <Share2 className="h-3 w-3" />}
+                {m === "pro" ? "Pro" : m === "connect" ? "Connect" : "Lite"}
               </button>
             ))}
           </div>
@@ -431,9 +714,11 @@ function Workspace() {
               screens={project?.screens ?? []}
               selectedId={selectedId}
               onSelectScreen={setSelectedId}
+              focusLabel={liteSel ? liteSelLabel : null}
+              onClearFocus={() => setLiteSel(null)}
             />
           ) : (
-            <ThemePanel project={project} setPlatform={setPlatform} />
+            <ThemePanel project={project} setPlatform={setPlatform} onPaletteChange={updatePaletteColor} />
           )}
 
           {mode === "pro" && project && (
@@ -455,23 +740,63 @@ function Workspace() {
         >
           {mode === "pro" ? (
             <ProCanvasHost project={project} isBusy={isBusy} />
+          ) : mode === "connect" ? (
+            project ? (
+              <Suspense fallback={<div className="p-6 text-sm text-muted-foreground">Loading flow…</div>}>
+                <FlowCanvas
+                  screens={project.screens}
+                  css={project.designSystemCss}
+                  startScreen={startScreen}
+                  selection={protoSelection}
+                  setSelection={setProtoSelection}
+                  selectedConnection={selectedConnection}
+                  setSelectedConnection={setSelectedConnection}
+                  applyInteraction={applyInteraction}
+                  clearInteraction={clearInteraction}
+                  initialPositions={(project as any).flow_positions}
+                  onPositions={(pos: Record<string, { x: number; y: number }>) => {
+                    setProject((prev) => (prev ? ({ ...(prev as any), flow_positions: pos } as Project) : prev));
+                  }}
+                  onOpenScreen={(id: string) => { setSelectedId(id); setMode("pro"); }}
+                />
+              </Suspense>
+            ) : (
+              <div className="flex h-full items-center justify-center"><EmptyState isBusy={isBusy} /></div>
+            )
           ) : (
             <LiteCanvas
               project={project}
               selectedId={selectedId}
-              onSelectScreen={setSelectedId}
+              onSelectScreen={(id) => { setSelectedId(id); setLiteSel(null); }}
+              selElId={liteSel}
+              onSelectElement={onLiteSelectElement}
               isBusy={isBusy}
             />
           )}
         </main>
 
-        {/* Right panel — Properties (Pro only) */}
+        {/* Right panel — Properties (Pro) or Prototype (Connect) */}
         {mode === "pro" && project && (
           <aside className="flex w-[300px] shrink-0 flex-col overflow-y-auto border-l border-border bg-surface">
             <Suspense fallback={<div className="p-3 text-xs text-muted-foreground">Loading properties…</div>}>
               <PropertiesPanel />
             </Suspense>
           </aside>
+        )}
+        {mode === "connect" && project && (
+          <Suspense fallback={<div className="w-[320px] shrink-0 p-3 text-xs text-muted-foreground">Loading prototype…</div>}>
+            <PrototypePanel
+              screens={project.screens}
+              currentScreenId={connectScreenId}
+              selection={protoSelection}
+              startScreen={startScreen}
+              onSwitch={setConnectScreenId}
+              setProtoSelection={setProtoSelection}
+              applyInteraction={applyInteraction}
+              clearInteraction={clearInteraction}
+              setStart={setStart}
+            />
+          </Suspense>
         )}
       </div>
 
@@ -486,15 +811,42 @@ function Workspace() {
 // Sub-components
 // ---------------------------------------------------------------------------
 
+// Live-save status pill for the navbar. Reads status straight from the editor
+// store so status updates re-render only this pill (never the Workspace tree).
+function SaveIndicator() {
+  const status = useEditorStore((s: any) => s.saveStatus) as "saved" | "saving";
+  const saving = status === "saving";
+  return (
+    <span
+      className={`ml-2 inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-medium transition-colors ${
+        saving
+          ? "border-brand/40 bg-brand/10 text-brand"
+          : "border-border bg-panel/50 text-muted-foreground"
+      }`}
+      title={saving ? "Saving your changes…" : "All changes saved locally"}
+      data-testid="save-indicator"
+      data-status={status}
+      aria-live="polite"
+    >
+      {saving ? <Loader2 className="h-3 w-3 animate-spin" /> : <Check className="h-3 w-3" />}
+      {saving ? "Saving…" : "Saved"}
+    </span>
+  );
+}
+
 function LiteCanvas({
   project,
   selectedId,
   onSelectScreen,
+  selElId,
+  onSelectElement,
   isBusy,
 }: {
   project: Project | null;
   selectedId: string | null;
   onSelectScreen: (id: string) => void;
+  selElId: { screenId: string; elId: string } | null;
+  onSelectElement: (screenId: string, elId: string | null) => void;
   isBusy: boolean;
 }) {
   return (
@@ -505,13 +857,16 @@ function LiteCanvas({
             {project.screens.map((s, i) => (
               <LitePhoneScreen
                 key={s.id}
+                screenId={s.id}
                 platform={project.platform}
                 html={s.html}
                 css={project.designSystemCss}
                 label={s.name}
                 index={i}
                 selected={s.id === selectedId}
+                selectedElId={selElId && selElId.screenId === s.id ? selElId.elId : null}
                 onClick={() => onSelectScreen(s.id)}
+                onSelectElement={onSelectElement}
               />
             ))}
           </div>
@@ -540,40 +895,74 @@ function ProCanvasHost({ project, isBusy }: { project: Project | null; isBusy: b
 }
 
 function LitePhoneScreen({
+  screenId,
   platform,
   html,
   css,
   label,
   index,
   selected,
+  selectedElId,
   onClick,
+  onSelectElement,
 }: {
+  screenId?: string;
   platform: "ios" | "android";
   html: string;
   css: string;
   label: string;
   index: number;
   selected: boolean;
+  selectedElId?: string | null;
   onClick: () => void;
+  onSelectElement?: (screenId: string, elId: string | null) => void;
 }) {
+  // Element selection: click content to target a specific element (for focused
+  // AI edits), click empty screen area to select the whole screen. Uses
+  // coordinate hit-testing (deepest tagged element first).
+  const onClickCapture = onSelectElement
+    ? (e: ReactMouseEvent<HTMLDivElement>) => {
+        const el = document
+          .elementsFromPoint(e.clientX, e.clientY)
+          .find((x) => x.hasAttribute("data-mae-id") && !(x as HTMLElement).classList.contains("screen"));
+        e.preventDefault();
+        e.stopPropagation();
+        if (el && screenId) onSelectElement(screenId, el.getAttribute("data-mae-id"));
+        else {
+          onClick();
+          if (screenId) onSelectElement(screenId, null);
+        }
+      }
+    : undefined;
+
   return (
     <div className="flex shrink-0 flex-col gap-3">
       <div className="ml-1 flex items-center gap-2 text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
         <span className="text-brand">{String(index + 1).padStart(2, "0")}</span>
         <span>{label}</span>
       </div>
-      <button
-        type="button"
-        onClick={onClick}
-        className={`group relative rounded-[48px] transition-all ${
+      <PhoneScreenFrame
+        platform={platform}
+        html={html}
+        css={css}
+        onSelect={onClick}
+        onClickCapture={onClickCapture}
+        wrapperData={{ "data-phone-frame-button": "" }}
+        wrapperClassName={`group relative cursor-default rounded-[48px] transition-all ${
           selected
             ? "shadow-[0_0_0_2px_var(--brand),0_30px_60px_-15px_rgba(99,102,241,0.4)]"
             : "shadow-2xl hover:shadow-[0_30px_60px_-15px_rgba(0,0,0,0.6)]"
         }`}
-        data-phone-frame-button
       >
-        <PhoneScreenRenderer platform={platform} html={html} css={css} />
-      </button>
+        {selectedElId && (
+          <style
+            // eslint-disable-next-line react/no-danger
+            dangerouslySetInnerHTML={{
+              __html: `[data-mae-id="${selectedElId}"]{outline:2px solid #6366f1 !important;outline-offset:2px;border-radius:4px;}`,
+            }}
+          />
+        )}
+      </PhoneScreenFrame>
     </div>
   );
 }
@@ -602,6 +991,7 @@ function EmptyState({ isBusy }: { isBusy: boolean }) {
 
 function ChatPanel({
   project, chat, isBusy, status, input, setInput, refine, screens, selectedId, onSelectScreen,
+  focusLabel, onClearFocus,
 }: {
   project: Project | null;
   chat: ChatMsg[];
@@ -613,6 +1003,8 @@ function ChatPanel({
   screens: Project["screens"];
   selectedId: string | null;
   onSelectScreen: (id: string) => void;
+  focusLabel?: string | null;
+  onClearFocus?: () => void;
 }) {
   return (
     <div className="flex flex-1 flex-col overflow-hidden">
@@ -663,6 +1055,15 @@ function ChatPanel({
       </div>
 
       <div className="p-4">
+        {focusLabel && (
+          <div className="mb-2 flex items-center gap-2 rounded-lg border border-brand/40 bg-brand/10 px-2.5 py-1.5 text-xs" data-testid="lite-focus-chip">
+            <span className="text-[10px] font-bold uppercase tracking-widest text-brand">Editing</span>
+            <span className="flex-1 truncate text-foreground/90">{focusLabel}</span>
+            <button onClick={onClearFocus} className="text-muted-foreground hover:text-foreground" aria-label="Clear element focus">
+              <X className="h-3.5 w-3.5" />
+            </button>
+          </div>
+        )}
         <div className="rounded-2xl border border-border bg-panel/60 p-3">
           <textarea
             value={input}
@@ -674,7 +1075,7 @@ function ChatPanel({
               }
             }}
             disabled={!project || isBusy}
-            placeholder={project ? "Change the selected screen…" : "What do you want to design?"}
+            placeholder={project ? (focusLabel ? `Change the ${focusLabel}…` : "Change the selected screen…") : "What do you want to design?"}
             className="min-h-[64px] w-full resize-none bg-transparent text-sm text-foreground placeholder:text-muted-foreground/80 focus:outline-none disabled:opacity-50"
           />
           <div className="mt-1 flex items-center justify-between">
@@ -696,21 +1097,60 @@ function ChatPanel({
   );
 }
 
-function ThemePanel({ project, setPlatform }: { project: Project | null; setPlatform: (p: "ios" | "android") => void }) {
+function ThemePanel({
+  project,
+  setPlatform,
+  onPaletteChange,
+}: {
+  project: Project | null;
+  setPlatform: (p: "ios" | "android") => void;
+  onPaletteChange?: (key: string, hex: string) => void;
+}) {
+  const [editSwatch, setEditSwatch] = useState<{ key: string; color: string; anchor: HTMLElement } | null>(null);
+  const swatchRefs = useRef<Record<string, HTMLButtonElement | null>>({});
+
   return (
     <div className="flex-1 overflow-y-auto p-4">
       {project ? (
         <>
           <div className="mb-3 text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Palette</div>
-          <div className="grid grid-cols-4 gap-2">
+          <p className="mb-3 text-[10px] text-muted-foreground/60">Click any swatch to edit. Changes update all screens instantly.</p>
+          <div className="grid grid-cols-3 gap-2">
             {Object.entries(project.designSystem.palette).map(([k, v]) => (
               <div key={k} className="rounded-xl border border-border p-2">
-                <div className="h-10 w-full rounded-md" style={{ background: v }} />
+                <button
+                  ref={(el) => { swatchRefs.current[k] = el; }}
+                  className={`h-10 w-full rounded-md transition-all hover:scale-[1.04] focus:outline-none ${
+                    editSwatch?.key === k ? "ring-2 ring-brand ring-offset-1 ring-offset-surface" : "hover:ring-1 hover:ring-white/30"
+                  }`}
+                  style={{ background: v }}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    if (editSwatch?.key === k) { setEditSwatch(null); return; }
+                    setEditSwatch({ key: k, color: v, anchor: e.currentTarget });
+                  }}
+                  title={`Edit ${k}`}
+                  data-testid={`palette-swatch-${k}`}
+                />
                 <div className="mt-1.5 text-[10px] font-medium capitalize">{k}</div>
-                <div className="text-[9px] text-muted-foreground">{v}</div>
+                <div className="text-[9px] text-muted-foreground font-mono">{v}</div>
               </div>
             ))}
           </div>
+
+          {editSwatch && (
+            <ColorPickerComponent
+              value={editSwatch.color}
+              onChange={(hex: string) => {
+                setEditSwatch((prev) => prev ? { ...prev, color: hex } : null);
+                onPaletteChange?.(editSwatch.key, hex);
+              }}
+              onOpacityChange={() => {}}
+              onClose={() => setEditSwatch(null)}
+              anchor={editSwatch.anchor}
+            />
+          )}
+
           <div className="mb-3 mt-6 text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Platform</div>
           <div className="flex items-center gap-1 rounded-full bg-panel/70 p-1">
             {(["ios", "android"] as const).map((p) => (
@@ -789,13 +1229,26 @@ function ProfileDropdown({ onClose }: { onClose: () => void }) {
 }
 
 function PreviewModal({ project, onClose, initialId }: { project: Project; onClose: () => void; initialId: string | null }) {
-  const [id, setId] = useState<string>(initialId ?? project.screens[0]?.id ?? "");
+  const flowStart = (project as any).flowStart as string | undefined;
+  const [id, setId] = useState<string>(flowStart ?? initialId ?? project.screens[0]?.id ?? "");
   const screen = project.screens.find((s) => s.id === id) ?? project.screens[0];
   useEffect(() => {
     function onKey(e: KeyboardEvent) { if (e.key === "Escape") onClose(); }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
+
+  // Prototype click-through: clicking an element with a data-nav-to link
+  // navigates to the linked screen (like Figma present mode).
+  const onNavClick = (e: ReactMouseEvent<HTMLDivElement>) => {
+    const el = (e.target as HTMLElement).closest?.("[data-nav-to]");
+    const target = el?.getAttribute("data-nav-to");
+    if (target && project.screens.some((s) => s.id === target)) {
+      e.preventDefault();
+      e.stopPropagation();
+      setId(target);
+    }
+  };
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm">
@@ -822,15 +1275,17 @@ function PreviewModal({ project, onClose, initialId }: { project: Project; onClo
           ))}
         </div>
         {screen && (
-          <LitePhoneScreen
-            platform={project.platform}
-            html={screen.html}
-            css={project.designSystemCss}
-            label={screen.name}
-            index={0}
-            selected={false}
-            onClick={() => {}}
-          />
+          <div onClickCapture={onNavClick} data-testid="preview-stage">
+            <LitePhoneScreen
+              platform={project.platform}
+              html={screen.html}
+              css={project.designSystemCss}
+              label={screen.name}
+              index={0}
+              selected={false}
+              onClick={() => {}}
+            />
+          </div>
         )}
       </div>
     </div>

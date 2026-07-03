@@ -226,7 +226,18 @@ export default function ColorPicker({ value = "#000000", onChange, onClose, anch
   const addRecentColor = useEditorStore((s) => s.addRecentColor);
   const ops = useEditorStore((s) => s.ops);
 
-  const pos = useMemo(() => getPos(anchor), [anchor]);
+  const [pos, setPos] = useState(() => getPos(anchor));
+  const posRef = useRef(pos);
+  posRef.current = pos;
+  const onDragBarMouseDown = (e) => {
+    e.preventDefault();
+    const ox = e.clientX - posRef.current.left;
+    const oy = e.clientY - posRef.current.top;
+    const onMove = (mv) => setPos({ left: mv.clientX - ox, top: mv.clientY - oy });
+    const onUp = () => { document.removeEventListener("mousemove", onMove); document.removeEventListener("mouseup", onUp); };
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", onUp);
+  };
 
   // Sync initial value → HSV
   useEffect(() => {
@@ -274,6 +285,14 @@ export default function ColorPicker({ value = "#000000", onChange, onClose, anch
     setHexInput(hex.replace("#", "").toUpperCase());
     emit(hex);
   }, [emit]);
+
+  // Load a color into the picker display WITHOUT emitting onChange.
+  // Used by the Saved tab so browsing saved colors doesn't mutate the canvas.
+  const previewColor = useCallback((hex) => {
+    const [nh, ns, nv] = hexToHsv(hex);
+    setH(nh); setS(ns); setV(nv);
+    setHexInput(hex.replace("#", "").toUpperCase());
+  }, []);
 
   const handleClose = useCallback(() => {
     addRecentColor(currentHex);
@@ -389,11 +408,18 @@ export default function ColorPicker({ value = "#000000", onChange, onClose, anch
 
   const picker = (
     <div ref={pickerRef} style={S.panel} onKeyDown={(e) => e.stopPropagation()}>
+      {/* Drag handle */}
+      <div
+        onMouseDown={onDragBarMouseDown}
+        style={{ display: "flex", justifyContent: "center", alignItems: "center", padding: "7px 0 4px", cursor: "grab", userSelect: "none" }}
+        title="Drag to reposition"
+      >
+        <div style={{ width: 30, height: 3, borderRadius: 2, background: "rgba(255,255,255,0.18)" }} />
+      </div>
       {/* Tab bar */}
       <div style={S.tabBar}>
         <button style={S.tab(tab === "custom")} onClick={() => setTab("custom")}>Select</button>
-        <button style={S.tab(tab === "libraries")} onClick={() => setTab("libraries")}>Library</button>
-        <button style={S.tab(tab === "saved")} onClick={() => setTab("saved")}>Saved</button>
+        <button style={S.tab(tab === "libraries")} onClick={() => setTab("libraries")}>Saved</button>
         <button style={S.close} onClick={handleClose}><X size={13} /></button>
       </div>
 
@@ -598,47 +624,6 @@ export default function ColorPicker({ value = "#000000", onChange, onClose, anch
             </div>
           )}
         </div>
-      ) : tab === "saved" ? (
-        /* Saved colors tab — quick swatches from colorStyles */
-        <div style={{ ...S.section, maxHeight: 360, overflowY: "auto" }}>
-          <div style={{ color: "#71717a", fontSize: 10, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8 }}>
-            Saved Colors
-          </div>
-          {colorStyles.length === 0 ? (
-            <div style={{ color: "#52525b", fontSize: 11, textAlign: "center", padding: "20px 0" }}>
-              <div>No saved colors yet.</div>
-              <div style={{ fontSize: 10, marginTop: 4, color: "#3f3f46" }}>
-                Switch to the Library tab to save colors.
-              </div>
-            </div>
-          ) : (
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 6, marginBottom: 12 }}>
-              {colorStyles.map((cs) => (
-                <button
-                  key={cs.id}
-                  title={cs.name || cs.color}
-                  onClick={() => { applyColor(cs.color); handleClose(); }}
-                  style={{
-                    width: 28, height: 28, borderRadius: 6, border: "1px solid rgba(255,255,255,0.1)",
-                    background: cs.color, cursor: "pointer", transition: "transform .1s",
-                  }}
-                  onMouseEnter={(e) => e.currentTarget.style.transform = "scale(1.15)"}
-                  onMouseLeave={(e) => e.currentTarget.style.transform = "scale(1)"}
-                />
-              ))}
-            </div>
-          )}
-          <button
-            onClick={handleClose}
-            style={{
-              width: "100%", padding: "6px 0", background: "rgba(255,255,255,0.04)",
-              border: "1px solid rgba(255,255,255,0.08)", borderRadius: 6,
-              color: "#71717a", fontSize: 11, cursor: "pointer",
-            }}
-          >
-            Done
-          </button>
-        </div>
       ) : (
         /* Libraries tab */
         <div style={{ ...S.section, maxHeight: 560, overflowY: "auto" }}>
@@ -670,7 +655,7 @@ export default function ColorPicker({ value = "#000000", onChange, onClose, anch
               key={style.id}
               onMouseEnter={() => setHoveredStyleId(style.id)}
               onMouseLeave={() => setHoveredStyleId(null)}
-              onClick={() => { if (editingStyleId !== style.id) applyColor(style.color); }}
+              onClick={() => { if (editingStyleId !== style.id) previewColor(style.color); }}
               style={{
                 display: "flex", alignItems: "center", gap: 8,
                 padding: "5px 6px", borderRadius: 6, cursor: "pointer",
@@ -682,7 +667,7 @@ export default function ColorPicker({ value = "#000000", onChange, onClose, anch
                 onClick={(e) => {
                   if (editingStyleId === style.id) return;
                   e.stopPropagation();
-                  applyColor(style.color);
+                  previewColor(style.color);
                   setEditingColorId(style.id);
                   setTab("custom");
                 }}
